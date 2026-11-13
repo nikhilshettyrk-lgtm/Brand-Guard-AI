@@ -129,6 +129,7 @@ function AppContent() {
           onOpenQuickAction={openQuickAction}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          onNavigate={setActivePage}
         />
 
         {/* Scrollable Page Body */}

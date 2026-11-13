@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   UploadCloud,
   FileCheck,
@@ -9,7 +9,12 @@ import {
   Clock,
   Eye,
   LineChart as LineChartIcon,
-  PieChart as PieChartIcon
+  PieChart as PieChartIcon,
+  ShieldCheck,
+  Activity,
+  Sparkles,
+  HeartPulse,
+  Info
 } from 'lucide-react';
 import {
   AreaChart,
@@ -24,6 +29,8 @@ import {
   Cell
 } from 'recharts';
 import StatCard from '../components/StatCard';
+import BrandHealthGauge from '../components/BrandHealthGauge';
+import { calculateBrandHealth } from '../utils/complianceAnalytics';
 import { useBrandGuard } from '../context/BrandGuardContext';
 
 // Custom Recharts Neumorphic Tooltip for real data
@@ -112,6 +119,11 @@ export default function Dashboard({ onNavigate, onTriggerQuickAction }) {
     return item.status === activityFilter;
   });
 
+  // Calculate Brand Health Index using exact formula:
+  // Brand Health = (Average Compliance Score × 0.5) + (Resolution Rate × 0.3) + ((100 − Critical Risk Percentage) × 0.2)
+  const brandHealth = useMemo(() => calculateBrandHealth(reviews), [reviews]);
+  const { contributingMetrics } = brandHealth;
+
   return (
     <div className="space-y-7 max-w-7xl mx-auto pb-12">
       {/* Top Banner / Welcome & Quick Actions Bar */}
@@ -158,6 +170,102 @@ export default function Dashboard({ onNavigate, onTriggerQuickAction }) {
             <ClockAlert className="w-4 h-4 text-[#F59E0B]" />
             Pending Approvals ({metrics.pendingCount})
           </button>
+        </div>
+      </div>
+
+      {/* Feature 1: Brand Health Index Card with Circular Gauge & Contributing Drivers */}
+      <div className="neu-card p-6 bg-gradient-to-r from-white/95 via-white/85 to-white/95 border border-white space-y-5">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-5 pb-4 border-b border-[#D5DDE7]/70">
+          <div className="flex items-center gap-4">
+            <BrandHealthGauge
+              score={brandHealth.score}
+              grade={brandHealth.grade}
+              gradeInfo={brandHealth.gradeInfo}
+              size={90}
+              strokeWidth={8}
+              showGrade={false}
+            />
+            <div>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-lg font-extrabold text-[#202B45]">
+                  Brand Health Index
+                </h3>
+                <span className={`text-[11px] font-extrabold px-2.5 py-0.5 rounded-full ${brandHealth.gradeInfo.badgeClass}`}>
+                  {brandHealth.grade}
+                </span>
+              </div>
+              <p className="text-xs text-[#5E6E82] mt-1 max-w-xl font-medium">
+                Composite brand equity health index: (Average Score × 0.5) + (Resolution Rate × 0.3) + ((100 − Critical Risk %) × 0.2).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 self-end md:self-auto flex-shrink-0">
+            <button
+              onClick={() => onNavigate('governance-insights')}
+              className="neu-btn px-4 py-2.5 text-xs font-bold text-[#536DFE] hover:text-[#4258E8] whitespace-nowrap flex items-center gap-1.5 shadow-sm"
+            >
+              <Activity className="w-4 h-4 text-[#536DFE]" />
+              View Governance Insights →
+            </button>
+          </div>
+        </div>
+
+        {/* Contributing Contributing Metrics Breakdown */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+          {/* Driver 1: Average Compliance Score (50%) */}
+          <div className="p-3.5 rounded-xl bg-white/70 neu-card-sm border border-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[#5E6E82]">Average Compliance Score (50%)</span>
+              <span className="font-black text-[#202B45]">{contributingMetrics.averageComplianceScore.value}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-[#D1D9E6] overflow-hidden">
+              <div
+                className="h-full bg-[#536DFE] rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, contributingMetrics.averageComplianceScore.value)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#8A99AD]">
+              <span>Contribution:</span>
+              <strong className="text-[#536DFE]">+{contributingMetrics.averageComplianceScore.weightedContribution} pts</strong>
+            </div>
+          </div>
+
+          {/* Driver 2: Resolution Rate (30%) */}
+          <div className="p-3.5 rounded-xl bg-white/70 neu-card-sm border border-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[#5E6E82]">Resolution Rate (30%)</span>
+              <span className="font-black text-[#10B981]">{contributingMetrics.resolutionRate.value}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-[#D1D9E6] overflow-hidden">
+              <div
+                className="h-full bg-[#10B981] rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, contributingMetrics.resolutionRate.value)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#8A99AD]">
+              <span>Contribution:</span>
+              <strong className="text-[#10B981]">+{contributingMetrics.resolutionRate.weightedContribution} pts</strong>
+            </div>
+          </div>
+
+          {/* Driver 3: Critical Risk Buffer (20%) */}
+          <div className="p-3.5 rounded-xl bg-white/70 neu-card-sm border border-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[#5E6E82]">Critical Risk Buffer (20%)</span>
+              <span className="font-black text-[#202B45]">{contributingMetrics.criticalRiskBuffer.value}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-[#D1D9E6] overflow-hidden">
+              <div
+                className="h-full bg-[#00E5FF] rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, contributingMetrics.criticalRiskBuffer.value)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#8A99AD]">
+              <span>Risk: {contributingMetrics.criticalRiskBuffer.criticalRiskPercentage}%</span>
+              <strong className="text-[#0284C7]">+{contributingMetrics.criticalRiskBuffer.weightedContribution} pts</strong>
+            </div>
+          </div>
         </div>
       </div>
 

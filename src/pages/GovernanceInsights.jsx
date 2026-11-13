@@ -26,7 +26,16 @@ import {
   ChevronDown,
   SlidersHorizontal,
   Eye,
-  UserCheck
+  UserCheck,
+  Printer,
+  Download,
+  Palette,
+  Activity,
+  HeartPulse,
+  TrendingDown,
+  ArrowUp,
+  ArrowDown,
+  Minus
 } from 'lucide-react';
 import {
   AreaChart,
@@ -43,6 +52,12 @@ import {
   Cell,
   Legend
 } from 'recharts';
+import BrandHealthGauge from '../components/BrandHealthGauge';
+import {
+  calculateBrandHealth,
+  calculateVisualVsTextAnalytics,
+  calculateMonthlyCohorts
+} from '../utils/complianceAnalytics';
 import { useBrandGuard } from '../context/BrandGuardContext';
 
 // Custom Tooltip for Recharts Neumorphic Style
@@ -118,12 +133,13 @@ export default function GovernanceInsights() {
     });
   }, [reviews, activeOrg]);
 
-  // 3. FILTER STATES
+  // 3. FILTER & REPORT MODAL STATES
   const [dateRange, setDateRange] = useState('all'); // 'all' | '7d' | '30d' | '90d'
   const [selectedContentType, setSelectedContentType] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedSeverity, setSelectedSeverity] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
+  const [showReportModal, setShowReportModal] = useState(false);
 
   // Dynamic filter options from actual organisation records
   const contentTypes = useMemo(() => {
@@ -326,6 +342,41 @@ export default function GovernanceInsights() {
       { name: 'Low', count: low, color: '#10B981', percentage: total > 0 ? Math.round((low / total) * 100) : 0 }
     ];
   }, [filteredReviews]);
+
+  // C. Feature 1: Brand Health Index (Composite brand equity indicator)
+  // Formula: Brand Health = (Average Compliance Score × 0.5) + (Resolution Rate × 0.3) + ((100 − Critical Risk Percentage) × 0.2)
+  const brandHealthData = useMemo(() => {
+    const calculated = calculateBrandHealth(filteredReviews);
+    return {
+      ...calculated,
+      // Compatibility aliases for UI cards
+      statusBadge: calculated.gradeInfo.badgeClass,
+      statusColor: calculated.gradeInfo.color,
+      summary: calculated.gradeInfo.summary,
+      complianceDriver: calculated.contributingMetrics.averageComplianceScore.value,
+      resolutionDriver: calculated.contributingMetrics.resolutionRate.value,
+      riskDriver: calculated.contributingMetrics.criticalRiskBuffer.value
+    };
+  }, [filteredReviews]);
+
+  // D. Feature 2: Visual vs Text Violations Segmentation
+  const visualVsTextAnalytics = useMemo(() => {
+    return calculateVisualVsTextAnalytics(filteredReviews);
+  }, [filteredReviews]);
+
+  // E. Feature 3: Monthly Reporting Cohorts with Month-over-Month (MoM) Deltas
+  const monthlyCohorts = useMemo(() => {
+    const rawCohorts = calculateMonthlyCohorts(orgReviews);
+    return rawCohorts.map(cohort => ({
+      ...cohort,
+      totalReviews: cohort.reviewVolume,
+      violations: cohort.totalViolations,
+      resolved: cohort.resolvedViolations,
+      visualIssues: cohort.visualViolations,
+      textIssues: cohort.textViolations,
+      resolutionRate: cohort.totalViolations > 0 ? Math.round((cohort.resolvedViolations / cohort.totalViolations) * 100) : 100
+    }));
+  }, [orgReviews]);
 
   // C. Most Frequently Violated Guidelines
   const frequentGuidelineViolations = useMemo(() => {
@@ -542,29 +593,137 @@ export default function GovernanceInsights() {
           </p>
         </div>
 
-        {/* ORGANISATION SELECTOR DROPDOWN (Strict Isolation) */}
-        <div className="neu-card-sm p-3 bg-white/50 border border-white/80 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 self-start lg:self-auto flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowReportModal(true)}
+            className="neu-btn px-4 py-2.5 text-xs font-bold text-[#202B45] hover:text-[#536DFE] flex items-center gap-2 rounded-xl transition-all"
+            title="Generate executive PDF governance report"
+          >
+            <Printer className="w-4 h-4 text-[#536DFE]" />
+            Generate PDF Report
+          </button>
+
+          {/* ORGANISATION SELECTOR DROPDOWN (Strict Isolation) */}
+          <div className="neu-card-sm p-2.5 bg-white/50 border border-white/80 rounded-2xl flex items-center gap-2">
             <Building2 className="w-4 h-4 text-[#536DFE]" />
-            <span className="text-xs font-bold text-[#202B45]">Active Organisation:</span>
+            <span className="text-xs font-bold text-[#202B45]">Active:</span>
+
+            <select
+              value={activeOrg}
+              onChange={(e) => {
+                setSelectedOrganisation(e.target.value);
+              }}
+              className="bg-transparent text-xs font-bold text-[#202B45] cursor-pointer focus:outline-none"
+            >
+              {availableOrganisations.map(org => {
+                const count = reviews.filter(r => matchesOrganisation(r.organisationId || r.organisation, org)).length;
+                return (
+                  <option key={org} value={org}>
+                    {org} ({count} reviews)
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* BRAND HEALTH SCORE INDEX CARD */}
+      <div className="neu-card p-6 md:p-7 bg-gradient-to-br from-white/95 via-[#E8ECF3] to-white/85 border border-white space-y-6">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-5 pb-5 border-b border-[#D5DDE7]/70">
+          <div className="flex items-center gap-4">
+            <BrandHealthGauge
+              score={brandHealthData.score}
+              grade={brandHealthData.grade}
+              gradeInfo={brandHealthData.gradeInfo}
+              size={96}
+              strokeWidth={9}
+              showGrade={false}
+            />
+            <div>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-xl font-extrabold text-[#202B45]">
+                  Brand Health Index
+                </h3>
+                <span className={`text-[11px] font-extrabold px-3 py-0.5 rounded-full ${brandHealthData.gradeInfo?.badgeClass || brandHealthData.statusBadge}`}>
+                  {brandHealthData.grade}
+                </span>
+              </div>
+              <p className="text-xs text-[#5E6E82] mt-1 max-w-xl font-medium">
+                {brandHealthData.summary}
+              </p>
+              <p className="text-[11px] text-[#8A99AD] mt-1 font-mono">
+                Formula: (Avg Compliance × 0.5) + (Resolution Rate × 0.3) + ((100 − Critical Risk %) × 0.2)
+              </p>
+            </div>
           </div>
 
-          <select
-            value={activeOrg}
-            onChange={(e) => {
-              setSelectedOrganisation(e.target.value);
-            }}
-            className="neu-input px-3.5 py-2 text-xs font-bold text-[#202B45] cursor-pointer rounded-xl"
-          >
-            {availableOrganisations.map(org => {
-              const count = reviews.filter(r => matchesOrganisation(r.organisationId || r.organisation, org)).length;
-              return (
-                <option key={org} value={org}>
-                  {org} ({count} reviews)
-                </option>
-              );
-            })}
-          </select>
+          <div className="neu-card-sm px-5 py-3 bg-white/90 rounded-2xl border border-white flex items-center gap-3 self-end md:self-auto">
+            <div className="text-right">
+              <span className="text-[10px] font-bold text-[#8A99AD] uppercase tracking-wider block">Composite Index</span>
+              <span className="text-3xl font-black" style={{ color: brandHealthData.statusColor }}>
+                {brandHealthData.score}<span className="text-sm font-bold text-[#8A99AD]">/100</span>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Contributing Metrics Breakdown */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Metric 1: Average Compliance Score (50%) */}
+          <div className="p-4 rounded-2xl bg-white/70 neu-card-sm border border-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[#5E6E82]">Average Compliance Score (50%)</span>
+              <span className="font-bold text-[#202B45]">{brandHealthData.contributingMetrics?.averageComplianceScore.value ?? brandHealthData.complianceDriver}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-[#D1D9E6] overflow-hidden">
+              <div
+                className="h-full bg-[#536DFE] rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, brandHealthData.contributingMetrics?.averageComplianceScore.value ?? brandHealthData.complianceDriver)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#8A99AD] pt-1">
+              <span>Points Added:</span>
+              <strong className="text-[#536DFE]">+{brandHealthData.contributingMetrics?.averageComplianceScore.weightedContribution ?? ((brandHealthData.complianceDriver * 0.5).toFixed(1))} pts</strong>
+            </div>
+          </div>
+
+          {/* Metric 2: Resolution Rate (30%) */}
+          <div className="p-4 rounded-2xl bg-white/70 neu-card-sm border border-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[#5E6E82]">Resolution Rate (30%)</span>
+              <span className="font-bold text-[#10B981]">{brandHealthData.contributingMetrics?.resolutionRate.value ?? brandHealthData.resolutionDriver}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-[#D1D9E6] overflow-hidden">
+              <div
+                className="h-full bg-[#10B981] rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, brandHealthData.contributingMetrics?.resolutionRate.value ?? brandHealthData.resolutionDriver)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#8A99AD] pt-1">
+              <span>Points Added:</span>
+              <strong className="text-[#10B981]">+{brandHealthData.contributingMetrics?.resolutionRate.weightedContribution ?? ((brandHealthData.resolutionDriver * 0.3).toFixed(1))} pts</strong>
+            </div>
+          </div>
+
+          {/* Metric 3: Critical Risk Buffer (20%) */}
+          <div className="p-4 rounded-2xl bg-white/70 neu-card-sm border border-white space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-[#5E6E82]">Critical Risk Buffer (20%)</span>
+              <span className="font-bold text-[#202B45]">{brandHealthData.contributingMetrics?.criticalRiskBuffer.value ?? brandHealthData.riskDriver}%</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-[#D1D9E6] overflow-hidden">
+              <div
+                className="h-full bg-[#00E5FF] rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, brandHealthData.contributingMetrics?.criticalRiskBuffer.value ?? brandHealthData.riskDriver)}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-[#8A99AD] pt-1">
+              <span>Critical Issues: {brandHealthData.contributingMetrics?.criticalRiskBuffer.criticalRiskPercentage ?? 0}%</span>
+              <strong className="text-[#0284C7]">+{brandHealthData.contributingMetrics?.criticalRiskBuffer.weightedContribution ?? ((brandHealthData.riskDriver * 0.2).toFixed(1))} pts</strong>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -835,6 +994,100 @@ export default function GovernanceInsights() {
               <div>
                 <span className="text-[#8A99AD] text-[10px] block">Human-Confirmed</span>
                 <span className="font-extrabold text-[#536DFE]">{metricsData.humanConfirmedViolationsCount} verified</span>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 1B: VISUAL VS TEXT VIOLATIONS BREAKDOWN */}
+          <div className="neu-card p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#8B5CF6]/15 text-[#8B5CF6] flex items-center justify-center neu-card-sm">
+                  <Palette className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#202B45]">
+                    Visual vs. Textual Violations Breakdown
+                  </h3>
+                  <p className="text-xs text-[#5E6E82]">
+                    Segmenting creative visual defects (palette, logo clear-space, typography & layout) against copy compliance
+                  </p>
+                </div>
+              </div>
+
+              <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/80 neu-card-sm border border-white text-[#202B45]">
+                {visualVsTextAnalytics.total} Total Issues Classified
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-center">
+              {/* Visual Issues Tile */}
+              <div className="p-4 rounded-2xl bg-white/60 neu-card-sm border border-white space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#8B5CF6] flex items-center gap-1.5">
+                    <Palette className="w-3.5 h-3.5" /> Visual Creative Issues
+                  </span>
+                  <span className="text-base font-extrabold text-[#8B5CF6]">
+                    {visualVsTextAnalytics.visualPercentage}%
+                  </span>
+                </div>
+                <div className="text-2xl font-black text-[#202B45]">
+                  {visualVsTextAnalytics.visualCount} <span className="text-xs font-normal text-[#8A99AD]">flags</span>
+                </div>
+                <p className="text-[11px] text-[#5E6E82]">
+                  Brand palette deviations, logo safe-zone infractions & contrast defects.
+                </p>
+                <div className="text-[10px] text-[#8A99AD] pt-1 border-t border-[#D5DDE7]/50">
+                  Resolved: <strong className="text-[#10B981]">{visualVsTextAnalytics.visualResolved}</strong> cleared
+                </div>
+              </div>
+
+              {/* Textual Issues Tile */}
+              <div className="p-4 rounded-2xl bg-white/60 neu-card-sm border border-white space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#536DFE] flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Textual Copy Violations
+                  </span>
+                  <span className="text-base font-extrabold text-[#536DFE]">
+                    {visualVsTextAnalytics.textPercentage}%
+                  </span>
+                </div>
+                <div className="text-2xl font-black text-[#202B45]">
+                  {visualVsTextAnalytics.textCount} <span className="text-xs font-normal text-[#8A99AD]">flags</span>
+                </div>
+                <p className="text-[11px] text-[#5E6E82]">
+                  Unsubstantiated claims, non-compliant terminology, unauthorized partnerships.
+                </p>
+                <div className="text-[10px] text-[#8A99AD] pt-1 border-t border-[#D5DDE7]/50">
+                  Resolved: <strong className="text-[#10B981]">{visualVsTextAnalytics.textResolved}</strong> cleared
+                </div>
+              </div>
+
+              {/* Donut Chart Comparison */}
+              <div className="h-44 flex items-center justify-center">
+                {visualVsTextAnalytics.total > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={visualVsTextAnalytics.chartData}
+                        dataKey="count"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={45}
+                        outerRadius={70}
+                        paddingAngle={4}
+                      >
+                        {visualVsTextAnalytics.chartData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<CustomTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <p className="text-xs text-[#8A99AD]">Zero violations to chart</p>
+                )}
               </div>
             </div>
           </div>
@@ -1284,7 +1537,255 @@ export default function GovernanceInsights() {
               </table>
             </div>
           </div>
+
+          {/* SECTION 7: MONTH-BY-MONTH GOVERNANCE PERFORMANCE REPORTS */}
+          <div className="neu-card p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+              <div>
+                <h3 className="text-base font-bold text-[#202B45] flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-[#536DFE]" />
+                  Monthly Governance Cohort Reports
+                </h3>
+                <p className="text-xs text-[#5E6E82]">
+                  Month-by-month compliance performance and violation resolution efficiency for {activeOrg}
+                </p>
+              </div>
+              <span className="text-xs font-bold text-[#8A99AD]">
+                {monthlyCohorts.length} Reporting Cohort{monthlyCohorts.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            {monthlyCohorts.length === 0 ? (
+              <div className="text-center py-10 px-4">
+                <Calendar className="w-10 h-10 text-[#8A99AD] mx-auto mb-2 opacity-50" />
+                <p className="text-sm font-bold text-[#202B45]">No Review Records Logged Yet</p>
+                <p className="text-xs text-[#5E6E82] mt-0.5">
+                  Monthly cohorts will dynamically aggregate as content reviews are completed for {activeOrg}.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[#D5DDE7] text-[10px] font-bold text-[#8A99AD] uppercase tracking-wider">
+                      <th className="py-2.5 px-3">Reporting Period</th>
+                      <th className="py-2.5 px-3">Monthly Volume</th>
+                      <th className="py-2.5 px-3">Avg Compliance</th>
+                      <th className="py-2.5 px-3">Resolved Violations</th>
+                      <th className="py-2.5 px-3">Pending Violations</th>
+                      <th className="py-2.5 px-3">Visual / Text Ratio</th>
+                      <th className="py-2.5 px-3 text-right">MoM Trend</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#D5DDE7]/50 font-medium text-[#202B45]">
+                    {monthlyCohorts.map((cohort, idx) => (
+                      <tr key={idx} className="hover:bg-white/40 transition-colors">
+                        <td className="py-3 px-3 font-bold">{cohort.month}</td>
+                        
+                        {/* Review Volume with MoM Delta */}
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold">{cohort.totalReviews} asset{cohort.totalReviews === 1 ? '' : 's'}</span>
+                            {cohort.momVolumeDelta !== null && (
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
+                                cohort.momVolumeDelta > 0 ? 'bg-emerald-100 text-emerald-800' :
+                                cohort.momVolumeDelta < 0 ? 'bg-amber-100 text-amber-800' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {cohort.momVolumeDelta > 0 ? `+${cohort.momVolumeDelta}` : cohort.momVolumeDelta} MoM
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Average Compliance Score with MoM Delta */}
+                        <td className="py-3 px-3 font-bold">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                              cohort.averageScore >= 90 ? 'bg-[#10B981]/15 text-[#047857]' :
+                              cohort.averageScore >= 75 ? 'bg-[#536DFE]/15 text-[#536DFE]' :
+                              cohort.averageScore >= 50 ? 'bg-[#F59E0B]/15 text-[#B45309]' :
+                              'bg-[#EF4444]/15 text-[#B91C1C]'
+                            }`}>
+                              {cohort.averageScore}%
+                            </span>
+                            {cohort.momScoreDelta !== null && (
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${
+                                cohort.momScoreDelta > 0 ? 'bg-emerald-100 text-emerald-800' :
+                                cohort.momScoreDelta < 0 ? 'bg-rose-100 text-rose-800' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {cohort.momScoreDelta > 0 ? `+${cohort.momScoreDelta}%` : `${cohort.momScoreDelta}%`}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Resolved Violations with MoM Delta */}
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-[#10B981]">{cohort.resolved} cleared</span>
+                            {cohort.momResolvedDelta !== null && (
+                              <span className="text-[10px] text-[#5E6E82]">
+                                ({cohort.momResolvedDelta >= 0 ? `+${cohort.momResolvedDelta}` : cohort.momResolvedDelta})
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Pending Violations */}
+                        <td className="py-3 px-3">
+                          <span className={`font-bold ${cohort.pendingViolations > 0 ? 'text-[#F59E0B]' : 'text-[#8A99AD]'}`}>
+                            {cohort.pendingViolations} pending
+                          </span>
+                        </td>
+
+                        {/* Visual / Text Ratio */}
+                        <td className="py-3 px-3 text-[11px] text-[#5E6E82]">
+                          <span className="text-[#8B5CF6] font-bold">{cohort.visualIssues} visual</span>
+                          <span className="mx-1">/</span>
+                          <span className="text-[#536DFE] font-bold">{cohort.textIssues} text</span>
+                        </td>
+
+                        {/* MoM Trend Status Badge */}
+                        <td className="py-3 px-3 text-right">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            cohort.averageScore >= 90 ? 'bg-[#10B981]/15 text-[#047857]' :
+                            cohort.averageScore >= 75 ? 'bg-[#536DFE]/15 text-[#536DFE]' :
+                            cohort.averageScore >= 50 ? 'bg-[#F59E0B]/15 text-[#B45309]' :
+                            'bg-[#EF4444]/15 text-[#B91C1C]'
+                          }`}>
+                            {cohort.averageScore >= 90 ? 'Optimal' :
+                             cohort.averageScore >= 75 ? 'Stable' :
+                             cohort.averageScore >= 50 ? 'Guarded' : 'Action Required'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
+      )}
+
+      {/* EXECUTIVE PDF REPORT MODAL WITH PRINT-TO-PDF SUPPORT */}
+      {showReportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative max-w-4xl max-h-[90vh] bg-white rounded-3xl p-6 md:p-8 shadow-2xl neu-card border border-white flex flex-col overflow-y-auto">
+            {/* Modal Controls */}
+            <div className="flex items-center justify-between pb-4 border-b border-[#D5DDE7]">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#536DFE]">
+                  Official Governance Document
+                </span>
+                <h3 className="text-xl font-extrabold text-[#202B45]">
+                  Executive Brand Compliance Report
+                </h3>
+                <p className="text-xs text-[#5E6E82]">
+                  Organisation: <strong>{activeOrg}</strong> • Generated {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                >
+                  <Printer className="w-4 h-4" />
+                  Print / Save as PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal(false)}
+                  className="neu-btn p-2 text-[#8A99AD] hover:text-[#202B45] rounded-xl"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Report Content */}
+            <div className="space-y-6 pt-5 print:p-0">
+              {/* Executive Summary */}
+              <div className="p-4 rounded-2xl bg-[#E8ECF3] border border-white flex flex-col md:flex-row items-center justify-between gap-4">
+                <div>
+                  <span className="text-xs font-bold text-[#8A99AD] uppercase">Brand Health Index</span>
+                  <div className="text-3xl font-black text-[#536DFE] mt-0.5">
+                    {brandHealthData.score}/100 • {brandHealthData.grade}
+                  </div>
+                  <p className="text-xs text-[#5E6E82] mt-1">
+                    Based on {metricsData.totalReviews} evaluated assets, {metricsData.totalViolationsDetected} detected issues, and {metricsData.resolutionRate}% resolution rate.
+                  </p>
+                </div>
+                <div className="neu-card-sm px-4 py-2 bg-white rounded-xl text-center">
+                  <span className="text-[10px] font-bold text-[#8A99AD] uppercase block">Benchmark</span>
+                  <span className="text-xl font-bold text-[#10B981]">{metricsData.averageScore}% Avg</span>
+                </div>
+              </div>
+
+              {/* KPI Summary Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-gray-50 border border-gray-200">
+                  <span className="text-[10px] text-[#8A99AD] font-bold block">Total Reviews</span>
+                  <span className="text-lg font-bold text-[#202B45]">{metricsData.totalReviews}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-gray-50 border border-gray-200">
+                  <span className="text-[10px] text-[#8A99AD] font-bold block">Violations Detected</span>
+                  <span className="text-lg font-bold text-[#EF4444]">{metricsData.totalViolationsDetected}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-gray-50 border border-gray-200">
+                  <span className="text-[10px] text-[#8A99AD] font-bold block">Resolved Violations</span>
+                  <span className="text-lg font-bold text-[#10B981]">{metricsData.resolvedViolations}</span>
+                </div>
+                <div className="p-3 rounded-xl bg-gray-50 border border-gray-200">
+                  <span className="text-[10px] text-[#8A99AD] font-bold block">Visual vs Text</span>
+                  <span className="text-lg font-bold text-[#8B5CF6]">{visualVsTextAnalytics.visualCount}v / {visualVsTextAnalytics.textCount}t</span>
+                </div>
+              </div>
+
+              {/* Monthly Cohorts Table */}
+              <div>
+                <h4 className="text-sm font-bold text-[#202B45] mb-2">Monthly Reporting Cohorts</h4>
+                <div className="border border-gray-200 rounded-xl overflow-hidden text-xs">
+                  <table className="w-full text-left">
+                    <thead className="bg-gray-100 text-[10px] uppercase text-gray-500 font-bold">
+                      <tr>
+                        <th className="p-2.5">Period</th>
+                        <th className="p-2.5">Reviews</th>
+                        <th className="p-2.5">Score</th>
+                        <th className="p-2.5">Violations</th>
+                        <th className="p-2.5">Resolution</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {monthlyCohorts.map((c, i) => (
+                        <tr key={i}>
+                          <td className="p-2.5 font-bold">{c.month}</td>
+                          <td className="p-2.5">{c.totalReviews}</td>
+                          <td className="p-2.5 font-bold">{c.averageScore}%</td>
+                          <td className="p-2.5">{c.violations}</td>
+                          <td className="p-2.5 text-[#10B981] font-bold">{c.resolutionRate}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Audit Sign-off Stamp */}
+              <div className="p-4 rounded-xl bg-gray-50 border border-gray-200 text-xs text-[#5E6E82] flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-[#202B45] block">Automated Governance Audit Seal</span>
+                  Verified against {activeOrg} brand rulebooks and multimodal criteria.
+                </div>
+                <span className="font-mono text-[10px] text-[#8A99AD]">CERT-BG-{Date.now().toString().slice(-6)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

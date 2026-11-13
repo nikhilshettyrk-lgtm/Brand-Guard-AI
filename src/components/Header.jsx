@@ -8,7 +8,12 @@ import {
   AlertTriangle,
   X,
   User,
-  Inbox
+  Inbox,
+  Shield,
+  UserCheck,
+  Sparkles,
+  Check,
+  Trash2
 } from 'lucide-react';
 import { useBrandGuard } from '../context/BrandGuardContext';
 
@@ -17,11 +22,31 @@ export default function Header({
   pageTitles,
   onOpenQuickAction,
   onSearchChange,
-  searchQuery
+  searchQuery,
+  onNavigate
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const { notifications, clearAllData, selectedOrganisation, setSelectedOrganisation, organisations } = useBrandGuard();
+  const {
+    notifications,
+    clearAllData,
+    selectedOrganisation,
+    setSelectedOrganisation,
+    organisations,
+    currentUser,
+    currentUserRole,
+    setCurrentUserRole,
+    clearNotifications,
+    markNotificationRead
+  } = useBrandGuard();
+
+  const userInitials = (currentUser?.name || 'WA')
+    .split(' ')
+    .filter(Boolean)
+    .map(p => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
 
   const currentTitle = pageTitles[activePage] || {
     title: 'BrandGuard AI',
@@ -78,6 +103,39 @@ export default function Header({
           </div>
         </div>
 
+        {/* Active Governance Role Switcher */}
+        <div className="relative">
+          <div className="neu-card-sm px-2.5 py-1.5 bg-white/70 border border-white flex items-center gap-2 rounded-xl">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#8A99AD] hidden md:inline">
+              Role:
+            </span>
+            <div className="flex items-center gap-1">
+              {['Creator', 'Reviewer', 'Manager'].map((role) => (
+                <button
+                  key={role}
+                  type="button"
+                  onClick={() => setCurrentUserRole(role)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    currentUserRole === role
+                      ? role === 'Manager'
+                        ? 'bg-[#536DFE] text-white shadow-sm'
+                        : role === 'Reviewer'
+                        ? 'bg-[#10B981] text-white shadow-sm'
+                        : 'bg-[#F59E0B] text-white shadow-sm'
+                      : 'text-[#5E6E82] hover:text-[#202B45] hover:bg-white/60'
+                  }`}
+                  title={`Switch active persona to ${role} (Demonstration Control)`}
+                >
+                  {role}
+                </button>
+              ))}
+            </div>
+            <span className="hidden xl:inline text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded bg-slate-200/60 text-[#8A99AD] ml-0.5">
+              Demo
+            </span>
+          </div>
+        </div>
+
         {/* Notification Icon Button */}
         <div className="relative">
           <button
@@ -97,22 +155,33 @@ export default function Header({
 
           {/* Notifications Dropdown */}
           {showNotifications && (
-            <div className="absolute right-0 mt-3 w-80 md:w-96 rounded-2xl bg-[#E8ECF3] neu-card p-4 z-50 border border-white/80 animate-in fade-in slide-in-from-top-2 duration-150">
+            <div className="absolute right-0 mt-3 w-80 md:w-96 rounded-2xl bg-[#E8ECF3] neu-card p-4 z-50 border border-white/80 animate-in fade-in slide-in-from-top-2 duration-150 shadow-xl">
               <div className="flex items-center justify-between pb-3 border-b border-[#D1D9E6]">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-sm text-[#202B45]">Notifications</span>
                   {notifications.length > 0 && (
                     <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#EF4444]/15 text-[#EF4444]">
-                      {notifications.length} unread
+                      {notifications.length} alerts
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={() => setShowNotifications(false)}
-                  className="text-[#8A99AD] hover:text-[#202B45]"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {notifications.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearNotifications}
+                      className="text-[11px] font-bold text-[#536DFE] hover:underline flex items-center gap-1"
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowNotifications(false)}
+                    className="text-[#8A99AD] hover:text-[#202B45] p-1 rounded-lg"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
               {notifications.length === 0 ? (
@@ -122,28 +191,55 @@ export default function Header({
                   </div>
                   <p className="text-xs font-bold text-[#202B45]">No notifications</p>
                   <p className="text-[11px] text-[#5E6E82] mt-0.5">
-                    You're all caught up. Alerts and review notifications will appear here.
+                    You're all caught up. Review events and approvals for {selectedOrganisation} will appear here.
                   </p>
                 </div>
               ) : (
-                <div className="divide-y divide-[#D1D9E6]/50 mt-2 max-h-72 overflow-y-auto pr-1">
+                <div className="divide-y divide-[#D1D9E6]/50 mt-2 max-h-80 overflow-y-auto pr-1">
                   {notifications.map((n) => (
-                    <div key={n.id} className="py-2.5 flex items-start gap-3 hover:bg-white/30 rounded-xl px-2 transition-colors">
-                      <div className="mt-0.5">
+                    <div
+                      key={n.id}
+                      onClick={() => {
+                        markNotificationRead(n.id);
+                        if (n.link && onNavigate) {
+                          onNavigate(n.link);
+                          setShowNotifications(false);
+                        }
+                      }}
+                      className={`py-2.5 flex items-start gap-3 hover:bg-white/40 rounded-xl px-2 transition-colors cursor-pointer ${
+                        n.read ? 'opacity-65' : ''
+                      }`}
+                    >
+                      <div className="mt-0.5 flex-shrink-0">
                         {n.type === 'critical' ? (
                           <div className="w-7 h-7 rounded-lg bg-[#EF4444]/15 text-[#EF4444] flex items-center justify-center">
                             <AlertTriangle className="w-3.5 h-3.5" />
                           </div>
+                        ) : n.type === 'success' ? (
+                          <div className="w-7 h-7 rounded-lg bg-[#10B981]/15 text-[#047857] flex items-center justify-center">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                          </div>
+                        ) : n.type === 'warning' ? (
+                          <div className="w-7 h-7 rounded-lg bg-[#F59E0B]/15 text-[#B45309] flex items-center justify-center">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                          </div>
                         ) : (
                           <div className="w-7 h-7 rounded-lg bg-[#536DFE]/15 text-[#536DFE] flex items-center justify-center">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <Sparkles className="w-3.5 h-3.5" />
                           </div>
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-semibold text-[#202B45] truncate">{n.title}</p>
-                        <p className="text-[11px] text-[#5E6E82] line-clamp-1">{n.desc}</p>
-                        <span className="text-[10px] text-[#8A99AD] font-medium">{n.time}</span>
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-xs font-semibold text-[#202B45] truncate">{n.title}</p>
+                          {n.link && (
+                            <span className="text-[9px] font-extrabold text-[#536DFE] flex items-center gap-0.5 whitespace-nowrap">
+                              Open →
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-[#5E6E82] line-clamp-2">{n.desc}</p>
+                        <span className="text-[10px] text-[#8A99AD] font-medium mt-0.5 block">{n.time}</span>
                       </div>
                     </div>
                   ))}
@@ -153,7 +249,7 @@ export default function Header({
           )}
         </div>
 
-        {/* User Profile & Organisation Info (Neutral Real Values) */}
+        {/* User Profile & Organisation Info */}
         <div className="relative">
           <button
             onClick={() => {
@@ -164,8 +260,14 @@ export default function Header({
           >
             {/* User Avatar with Status indicator */}
             <div className="relative flex-shrink-0">
-              <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#536DFE] to-[#7288FF] text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                WA
+              <div className={`w-8 h-8 rounded-xl text-white flex items-center justify-center font-bold text-xs shadow-sm ${
+                currentUserRole === 'Manager'
+                  ? 'bg-gradient-to-tr from-[#536DFE] to-[#7288FF]'
+                  : currentUserRole === 'Reviewer'
+                  ? 'bg-gradient-to-tr from-[#10B981] to-[#34D399]'
+                  : 'bg-gradient-to-tr from-[#F59E0B] to-[#FBBF24]'
+              }`}>
+                {userInitials}
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#10B981] ring-2 ring-[#E8ECF3]" />
             </div>
@@ -173,10 +275,10 @@ export default function Header({
             {/* User & Org Details */}
             <div className="hidden sm:block">
               <div className="text-xs font-bold text-[#202B45] leading-tight">
-                Workspace Administrator
+                {currentUser?.name || 'Workspace Administrator'}
               </div>
               <div className="text-[10px] font-semibold text-[#5E6E82]">
-                {selectedOrganisation || 'My Workspace'}
+                {currentUser?.role || selectedOrganisation}
               </div>
             </div>
 
@@ -185,27 +287,57 @@ export default function Header({
 
           {/* User Menu Dropdown */}
           {showUserMenu && (
-            <div className="absolute right-0 mt-3 w-64 rounded-2xl bg-[#E8ECF3] neu-card p-3 z-50 border border-white/80 animate-in fade-in slide-in-from-top-2 duration-150">
+            <div className="absolute right-0 mt-3 w-80 rounded-2xl bg-[#E8ECF3] neu-card p-3.5 z-50 border border-white/80 animate-in fade-in slide-in-from-top-2 duration-150 shadow-xl space-y-3">
               <div className="p-2 border-b border-[#D1D9E6]">
-                <p className="text-xs font-bold text-[#202B45]">Workspace Administrator</p>
-                <p className="text-[11px] text-[#5E6E82]">{selectedOrganisation || 'My Workspace'}</p>
-                <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#536DFE]/15 text-[#536DFE]">
-                  BrandGuard AI
-                </span>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold text-[#202B45]">{currentUser?.name || 'Workspace Administrator'}</p>
+                    <p className="text-[11px] text-[#5E6E82]">{currentUser?.role || 'Enterprise Administrator'}</p>
+                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    currentUserRole === 'Manager' ? 'bg-[#536DFE]/15 text-[#536DFE]' : currentUserRole === 'Reviewer' ? 'bg-[#10B981]/15 text-[#047857]' : 'bg-[#F59E0B]/15 text-[#B45309]'
+                  }`}>
+                    {currentUserRole}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 text-[10px] text-[#8A99AD] mt-1.5 font-semibold">
+                  <Building2 className="w-3 h-3 text-[#536DFE]" />
+                  <span>Organisation: <strong>{selectedOrganisation}</strong></span>
+                </div>
               </div>
-              <div className="py-1">
-                <button
-                  onClick={() => setShowUserMenu(false)}
-                  className="w-full text-left px-3 py-2 text-xs font-medium text-[#202B45] hover:bg-white/40 rounded-xl"
-                >
-                  Workspace Preferences
-                </button>
+
+              {/* Role Permissions Description */}
+              <div className="p-2.5 bg-white/60 rounded-xl text-[11px] space-y-1 neu-card-sm border border-white">
+                <span className="font-bold text-[#202B45] block text-[10px] uppercase text-[#8A99AD]">Role Capabilities</span>
+                {currentUserRole === 'Manager' && (
+                  <p className="text-[#5E6E82]">Full administrative oversight: reviewer assignment, batch sign-offs, final production clearance & external channel dispatch.</p>
+                )}
+                {currentUserRole === 'Reviewer' && (
+                  <p className="text-[#5E6E82]">Audit assigned submissions, inspect visual & textual findings, request revisions, and issue formal compliance sign-offs.</p>
+                )}
+                {currentUserRole === 'Creator' && (
+                  <p className="text-[#5E6E82]">Content drafting, multi-format ingestion (copy & image), working copy adjustments, and re-analysis submission.</p>
+                )}
+              </div>
+
+              {/* Security Architecture Notice */}
+              <div className="p-2.5 bg-amber-500/10 rounded-xl border border-amber-500/25 text-[10.5px] text-[#92400E] space-y-1">
+                <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider text-[9.5px] text-[#B45309]">
+                  <Shield className="w-3 h-3 text-[#D97706]" />
+                  Security Architecture Notice
+                </div>
+                <p className="leading-snug">
+                  Role switching is a demonstration control for testing workflows. In production environments, identity and permissions are authenticated via backend enterprise SSO / OAuth session tokens.
+                </p>
+              </div>
+
+              <div className="pt-1 border-t border-[#D1D9E6]/50">
                 <button
                   onClick={() => {
                     setShowUserMenu(false);
                     clearAllData();
                   }}
-                  className="w-full text-left px-3 py-2 text-xs font-medium text-[#EF4444] hover:bg-red-50/50 rounded-xl"
+                  className="w-full text-left px-3 py-2 text-xs font-medium text-[#EF4444] hover:bg-red-50/50 rounded-xl transition-colors"
                 >
                   Reset Workspace Records
                 </button>

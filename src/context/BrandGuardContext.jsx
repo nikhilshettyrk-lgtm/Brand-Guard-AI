@@ -1,10 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import { getDefaultLogoAssets } from '../utils/logoAssetHelper';
 
 const BrandGuardContext = createContext(null);
 
 const STORAGE_KEY = 'brandguard_app_data_v2';
 
 export const defaultOrgs = ['BrightWave Analytics', 'Northstar Digital'];
+
+export const defaultTeamMembers = [
+  { id: 'tm-1', name: 'Sarah Chen', role: 'Lead Brand Reviewer', roleType: 'Reviewer' },
+  { id: 'tm-2', name: 'Alex Rivera', role: 'Compliance Manager', roleType: 'Manager' },
+  { id: 'tm-3', name: 'Maya Patel', role: 'Creative Content Lead', roleType: 'Creator' },
+  { id: 'tm-4', name: 'Workspace Administrator', role: 'Enterprise Administrator', roleType: 'Manager' }
+];
 
 export function matchesOrganisation(itemOrg, targetOrg) {
   if (!targetOrg) return true;
@@ -28,16 +36,29 @@ export function BrandGuardProvider({ children }) {
           activities: Array.isArray(parsed.activities) ? parsed.activities : [],
           notifications: Array.isArray(parsed.notifications) ? parsed.notifications : [],
           colorTokens: Array.isArray(parsed.colorTokens) ? parsed.colorTokens : [],
+          logoAssets: Array.isArray(parsed.logoAssets) && parsed.logoAssets.length > 0
+            ? parsed.logoAssets
+            : getDefaultLogoAssets(),
           organisations: Array.isArray(parsed.organisations) && parsed.organisations.length > 0
             ? Array.from(new Set([...defaultOrgs, ...parsed.organisations]))
             : defaultOrgs,
-          settings: parsed.settings || {
+          currentUserRole: parsed.currentUserRole || 'Manager',
+          settings: {
             sensitivity: 85,
             autoApprove: false,
             notifySlack: false,
             notifyEmail: false,
             slackChannel: '',
-            adminEmail: ''
+            adminEmail: '',
+            integrations: {
+              slack: { enabled: false, webhookUrl: '', channel: '#brand-governance' },
+              email: { enabled: false, address: '' },
+              wordpress: { enabled: true, endpoint: 'https://cms.enterprise.internal/wp-json/wp/v2/posts', status: 'Connected' },
+              hubspot: { enabled: true, portalId: '984321', status: 'Connected' },
+              linkedin: { enabled: true, account: 'Company Global Page', status: 'Connected' },
+              twitter: { enabled: true, handle: '@BrandGlobal', status: 'Connected' }
+            },
+            ...(parsed.settings || {})
           },
           selectedOrganisation: parsed.selectedOrganisation || defaultOrgs[0]
         };
@@ -52,14 +73,24 @@ export function BrandGuardProvider({ children }) {
       activities: [],
       notifications: [],
       colorTokens: [],
+      logoAssets: getDefaultLogoAssets(),
       organisations: defaultOrgs,
+      currentUserRole: 'Manager',
       settings: {
         sensitivity: 85,
         autoApprove: false,
         notifySlack: false,
         notifyEmail: false,
         slackChannel: '',
-        adminEmail: ''
+        adminEmail: '',
+        integrations: {
+          slack: { enabled: false, webhookUrl: '', channel: '#brand-governance' },
+          email: { enabled: false, address: '' },
+          wordpress: { enabled: true, endpoint: 'https://cms.enterprise.internal/wp-json/wp/v2/posts', status: 'Connected' },
+          hubspot: { enabled: true, portalId: '984321', status: 'Connected' },
+          linkedin: { enabled: true, account: 'Company Global Page', status: 'Connected' },
+          twitter: { enabled: true, handle: '@BrandGlobal', status: 'Connected' }
+        }
       },
       selectedOrganisation: defaultOrgs[0]
     };
@@ -127,6 +158,17 @@ export function BrandGuardProvider({ children }) {
 
   const currentOrg = data.selectedOrganisation || defaultOrgs[0];
 
+  // Active persona tied to the active governance role
+  const currentUser = useMemo(() => {
+    const member = defaultTeamMembers.find(m => m.roleType === (data.currentUserRole || 'Manager'));
+    return member || {
+      id: 'tm-4',
+      name: 'Workspace Administrator',
+      role: 'Enterprise Administrator',
+      roleType: data.currentUserRole || 'Manager'
+    };
+  }, [data.currentUserRole]);
+
   // Dynamically extract all distinct organisations
   const organisations = useMemo(() => {
     const set = new Set(defaultOrgs);
@@ -159,6 +201,49 @@ export function BrandGuardProvider({ children }) {
   const orgActivities = useMemo(() => {
     return data.activities.filter(a => !a.organisationId || matchesOrganisation(a.organisationId, currentOrg));
   }, [data.activities, currentOrg]);
+
+  // ISOLATED NOTIFICATIONS FOR CURRENT ORGANISATION
+  const orgNotifications = useMemo(() => {
+    return (data.notifications || []).filter(n => !n.organisationId || matchesOrganisation(n.organisationId, currentOrg));
+  }, [data.notifications, currentOrg]);
+
+  // Approved Brand Color Tokens for current organisation
+  const orgColorTokens = useMemo(() => {
+    const custom = (data.colorTokens || []).filter(c => !c.organisation || matchesOrganisation(c.organisation, currentOrg));
+    if (custom.length > 0) return custom;
+
+    if (matchesOrganisation(currentOrg, 'BrightWave Analytics')) {
+      return [
+        { name: 'Tech Cobalt Blue', hex: '#536DFE', role: 'Primary Brand Color', organisation: 'BrightWave Analytics' },
+        { name: 'Cyan Glow Accent', hex: '#00E5FF', role: 'Secondary Accent', organisation: 'BrightWave Analytics' },
+        { name: 'Slate Dark Navy', hex: '#202B45', role: 'Typography & Headers', organisation: 'BrightWave Analytics' },
+        { name: 'Neumorphic Slate', hex: '#E8ECF3', role: 'Background Canvas', organisation: 'BrightWave Analytics' }
+      ];
+    }
+    if (matchesOrganisation(currentOrg, 'Northstar Digital')) {
+      return [
+        { name: 'Enterprise Midnight', hex: '#0A2540', role: 'Primary Brand Color', organisation: 'Northstar Digital' },
+        { name: 'Stripe Indigo', hex: '#635BFF', role: 'Secondary Accent', organisation: 'Northstar Digital' },
+        { name: 'Mint Cyan', hex: '#00D4B2', role: 'Highlight', organisation: 'Northstar Digital' },
+        { name: 'Slate Gray', hex: '#425466', role: 'Body Typography', organisation: 'Northstar Digital' }
+      ];
+    }
+    return [
+      { name: 'Primary Brand Blue', hex: '#536DFE', role: 'Primary Brand Color', organisation: currentOrg },
+      { name: 'Slate Dark', hex: '#202B45', role: 'Typography', organisation: currentOrg },
+      { name: 'Slate Canvas', hex: '#E8ECF3', role: 'Background Canvas', organisation: currentOrg }
+    ];
+  }, [data.colorTokens, currentOrg]);
+
+  // Approved Brand Logo Assets for current organisation
+  const orgLogoAssets = useMemo(() => {
+    return (data.logoAssets || []).filter(l => matchesOrganisation(l.organisation, currentOrg));
+  }, [data.logoAssets, currentOrg]);
+
+  const primaryOrgLogo = useMemo(() => {
+    if (!orgLogoAssets || orgLogoAssets.length === 0) return null;
+    return orgLogoAssets.find(l => l.isPrimary) || orgLogoAssets[0];
+  }, [orgLogoAssets]);
 
   // Real computed metrics derived from actual reviews of current organization
   const metrics = useMemo(() => {
@@ -430,6 +515,8 @@ export function BrandGuardProvider({ children }) {
     const initialFindings = review.findings || review.violations || [];
     const organisationId = review.organisationId || currentOrg;
     const now = new Date();
+    const effectiveActor = review.submittedBy || currentUser.name;
+    const effectiveRole = review.actorRole || currentUser.roleType || 'Creator';
 
     const initialVersion = {
       version: 1,
@@ -443,6 +530,7 @@ export function BrandGuardProvider({ children }) {
       findings: initialFindings,
       violations: initialFindings,
       checks: review.checks || [],
+      visualAnalysis: review.visualAnalysis || null,
       modelUsed: review.modelUsed || 'gemini-3.5-flash',
       organisationId,
       note: 'Initial Submission'
@@ -452,7 +540,8 @@ export function BrandGuardProvider({ children }) {
       id: `audit-${Date.now()}-1`,
       type: 'submission',
       action: 'Content Submitted & Analyzed',
-      actor: review.submittedBy || 'Workspace Administrator',
+      actor: effectiveActor,
+      role: effectiveRole,
       timestamp: now.toISOString(),
       formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
@@ -468,7 +557,7 @@ export function BrandGuardProvider({ children }) {
       id: newReviewId,
       title: review.title || 'Untitled Asset',
       contentType: review.contentType || 'General Content',
-      submissionMode: review.submissionMode || 'text', // 'text' | 'file'
+      submissionMode: review.submissionMode || 'text', // 'text' | 'file' | 'image'
       originalFile: review.originalFile || null,
       originalContent: initialContent,
       currentContent: initialContent,
@@ -477,7 +566,8 @@ export function BrandGuardProvider({ children }) {
       department: review.department || review.contentType || 'Marketing',
       status: review.status || 'Pending Review', // Never automatically approved!
       score: typeof review.score === 'number' ? review.score : 0,
-      submittedBy: review.submittedBy || 'Workspace Administrator',
+      submittedBy: effectiveActor,
+      submittedByRole: effectiveRole,
       timestamp: 'Just now',
       date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
       summary: review.summary || '',
@@ -486,10 +576,34 @@ export function BrandGuardProvider({ children }) {
       findings: initialFindings,
       passedRules: review.passedRules || [],
       riskLevel: (review.score >= 85) ? 'Low' : (review.score >= 70) ? 'Medium' : 'High',
+      visualAnalysis: review.visualAnalysis || null,
       modelUsed: review.modelUsed || 'gemini-3.5-flash',
+      assignedTo: review.assignedTo || null,
+      assignedToId: review.assignedToId || null,
+      assignedBy: review.assignedBy || null,
+      assignedAt: review.assignedAt || null,
+      productionClearance: false,
+      clearanceDetails: null,
+      publishingStatus: 'Not Published',
+      publishingHistory: [],
+      publishedChannels: [],
       versions: [initialVersion],
       auditTrail: [initialAuditEvent],
       decisionDetails: null
+    };
+
+    const newNotification = {
+      id: `notif-${Date.now()}`,
+      type: (review.score < 70 || initialFindings.length > 2) ? 'critical' : 'info',
+      title: `New Content Submitted: ${newReview.title}`,
+      desc: `${newReview.contentType} submitted by ${effectiveActor} for ${organisationId}. Awaiting review sign-off.`,
+      submissionId: newReviewId,
+      link: 'review-approval',
+      organisationId,
+      targetRole: 'Manager',
+      time: 'Just now',
+      timestamp: now.toISOString(),
+      read: false
     };
 
     const newActivity = {
@@ -504,7 +618,7 @@ export function BrandGuardProvider({ children }) {
       organisationId,
       status: newReview.status,
       score: newReview.score,
-      submittedBy: newReview.submittedBy,
+      submittedBy: effectiveActor,
       timestamp: 'Just now',
       violationsCount: newReview.violations ? newReview.violations.length : 0,
       issue: newReview.violations && newReview.violations[0] ? newReview.violations[0].explanation || newReview.violations[0].detail : null
@@ -514,8 +628,53 @@ export function BrandGuardProvider({ children }) {
       ...prev,
       reviews: [newReview, ...prev.reviews],
       activities: [newActivity, ...prev.activities],
+      notifications: [newNotification, ...(prev.notifications || []).slice(0, 49)],
       organisations: Array.from(new Set([...(prev.organisations || defaultOrgs), organisationId]))
     }));
+
+    // Trigger content.submitted webhook dispatch in background
+    try {
+      fetch('/api/webhooks/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organisationId,
+          eventType: 'content.submitted',
+          data: {
+            submissionId: newReviewId,
+            title: newReview.title,
+            contentType: newReview.contentType,
+            submittedBy: effectiveActor,
+            score: newReview.score,
+            riskLevel: newReview.riskLevel,
+            status: newReview.status
+          }
+        })
+      }).catch(() => {});
+    } catch (_) {}
+
+    // Trigger Slack notification for content.submitted
+    try {
+      fetch('/api/slack/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organisationId,
+          eventType: 'content.submitted',
+          data: {
+            submissionId: newReviewId,
+            title: newReview.title,
+            contentType: newReview.contentType,
+            actor: effectiveActor,
+            role: 'Creator',
+            score: newReview.score,
+            riskLevel: newReview.riskLevel,
+            status: newReview.status || 'Pending Review',
+            reviewLink: 'http://localhost:3000/#review-approval'
+          }
+        })
+      }).catch(() => {});
+    } catch (_) {}
 
     return newReview;
   };
@@ -523,6 +682,9 @@ export function BrandGuardProvider({ children }) {
   const updateReviewWithReanalysis = (reviewId, updatedData) => {
     setData(prev => {
       const now = new Date();
+      const effectiveActor = updatedData.actor || currentUser.name;
+      const effectiveRole = updatedData.role || currentUser.roleType || 'Creator';
+
       const updatedReviews = prev.reviews.map(r => {
         if (r.id === reviewId) {
           const prevVersions = Array.isArray(r.versions) && r.versions.length > 0 ? r.versions : [
@@ -560,6 +722,7 @@ export function BrandGuardProvider({ children }) {
             findings: newFindings,
             violations: newFindings,
             checks: updatedData.checks || [],
+            visualAnalysis: updatedData.visualAnalysis !== undefined ? updatedData.visualAnalysis : (r.visualAnalysis || null),
             modelUsed: updatedData.modelUsed || 'gemini-3.5-flash',
             organisationId,
             note: updatedData.note || `Re-analysis (v${nextVersionNum})`
@@ -569,7 +732,8 @@ export function BrandGuardProvider({ children }) {
             id: `audit-${Date.now()}-re`,
             type: 'reanalysis',
             action: `Content Re-analysed (v${nextVersionNum})`,
-            actor: 'Workspace Administrator',
+            actor: effectiveActor,
+            role: effectiveRole,
             timestamp: now.toISOString(),
             formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
@@ -593,6 +757,7 @@ export function BrandGuardProvider({ children }) {
             violations: newFindings,
             findings: newFindings,
             checks: updatedData.checks || r.checks,
+            visualAnalysis: updatedData.visualAnalysis !== undefined ? updatedData.visualAnalysis : (r.visualAnalysis || null),
             modelUsed: updatedData.modelUsed || r.modelUsed,
             riskLevel: (updatedData.score >= 85) ? 'Low' : (updatedData.score >= 70) ? 'Medium' : 'High',
             versions: [...prevVersions, newVersion],
@@ -603,6 +768,19 @@ export function BrandGuardProvider({ children }) {
       });
 
       const target = prev.reviews.find(r => r.id === reviewId);
+      const reanalysisNotification = target ? {
+        id: `notif-${Date.now()}-re`,
+        type: 'warning',
+        title: `Revisions Re-analysed: ${target.title}`,
+        desc: `Score updated to ${updatedData.score}% (v${(target.versions?.length || 1) + 1}) by ${effectiveActor}.`,
+        submissionId: reviewId,
+        link: 'review-approval',
+        organisationId: target.organisationId,
+        time: 'Just now',
+        timestamp: now.toISOString(),
+        read: false
+      } : null;
+
       const newActivity = target ? {
         id: `act-${Date.now()}`,
         title: `${target.title} Re-analysed (v${(target.versions?.length || 1) + 1})`,
@@ -610,7 +788,7 @@ export function BrandGuardProvider({ children }) {
         department: target.department,
         status: updatedData.status || 'Pending Review',
         score: updatedData.score,
-        submittedBy: 'Workspace Administrator',
+        submittedBy: effectiveActor,
         timestamp: 'Just now',
         violationsCount: updatedData.findings ? updatedData.findings.length : 0,
         issue: updatedData.findings && updatedData.findings[0] ? updatedData.findings[0].explanation || updatedData.findings[0].detail : null
@@ -619,19 +797,29 @@ export function BrandGuardProvider({ children }) {
       return {
         ...prev,
         reviews: updatedReviews,
-        activities: newActivity ? [newActivity, ...prev.activities] : prev.activities
+        activities: newActivity ? [newActivity, ...prev.activities] : prev.activities,
+        notifications: reanalysisNotification ? [reanalysisNotification, ...(prev.notifications || []).slice(0, 49)] : prev.notifications
       };
     });
   };
 
-  const updateReviewStatus = (id, newStatus, reviewerNotes = '', reviewerName = 'Workspace Administrator') => {
+  const updateReviewStatus = (id, newStatus, reviewerNotes = '', reviewerName = null, reviewerRole = null) => {
+    // Creator role is strictly unauthorized to approve, reject, or request changes
+    if (data.currentUserRole === 'Creator') {
+      throw new Error('Access Denied: Creator role cannot approve, reject, or request revisions on submissions.');
+    }
+
+    const effectiveReviewer = reviewerName || currentUser.name;
+    const effectiveRole = reviewerRole || currentUser.roleType || 'Reviewer';
+
     setData(prev => {
       const target = prev.reviews.find(r => r.id === id);
-      const organisationId = target?.organisationId || 'Salesforce';
+      const organisationId = target?.organisationId || currentOrg;
       const now = new Date();
 
       const decisionDetails = {
-        reviewer: reviewerName || 'Workspace Administrator',
+        reviewer: effectiveReviewer,
+        role: effectiveRole,
         decision: newStatus,
         comments: reviewerNotes || '',
         timestamp: now.toISOString(),
@@ -645,7 +833,8 @@ export function BrandGuardProvider({ children }) {
         id: `audit-${Date.now()}-dec`,
         type: 'decision',
         action: `Reviewer Decision: ${newStatus}`,
-        actor: reviewerName || 'Workspace Administrator',
+        actor: effectiveReviewer,
+        role: effectiveRole,
         timestamp: now.toISOString(),
         formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
@@ -655,6 +844,56 @@ export function BrandGuardProvider({ children }) {
         organisationId,
         submissionId: id
       };
+
+      let statusNotification = null;
+      if (target) {
+        if (newStatus === 'Changes Requested') {
+          statusNotification = {
+            id: `notif-${Date.now()}-cr`,
+            type: 'warning',
+            title: `Revision Requested: ${target.title}`,
+            desc: `${effectiveReviewer} (${effectiveRole}) requested revisions: "${reviewerNotes}".`,
+            submissionId: id,
+            link: 'content-review',
+            organisationId,
+            targetUser: target.submittedBy,
+            targetRole: 'Creator',
+            time: 'Just now',
+            timestamp: now.toISOString(),
+            read: false
+          };
+        } else if (newStatus === 'Rejected') {
+          statusNotification = {
+            id: `notif-${Date.now()}-rej`,
+            type: 'critical',
+            title: `Submission Rejected: ${target.title}`,
+            desc: `Rejected by ${effectiveReviewer} (${effectiveRole}). Reason: "${reviewerNotes}".`,
+            submissionId: id,
+            link: 'content-review',
+            organisationId,
+            targetUser: target.submittedBy,
+            targetRole: 'Creator',
+            time: 'Just now',
+            timestamp: now.toISOString(),
+            read: false
+          };
+        } else if (newStatus === 'Approved') {
+          statusNotification = {
+            id: `notif-${Date.now()}-app`,
+            type: 'success',
+            title: `Submission Approved: ${target.title}`,
+            desc: `Approved by ${effectiveReviewer} (${effectiveRole}) with score ${target.score}%. Ready for final clearance.`,
+            submissionId: id,
+            link: 'review-approval',
+            organisationId,
+            targetUser: target.submittedBy,
+            targetRole: 'Creator',
+            time: 'Just now',
+            timestamp: now.toISOString(),
+            read: false
+          };
+        }
+      }
 
       const updatedReviews = prev.reviews.map(r => {
         if (r.id === id) {
@@ -677,18 +916,924 @@ export function BrandGuardProvider({ children }) {
         department: target.department,
         status: newStatus,
         score: target.score,
-        submittedBy: reviewerName || 'Workspace Administrator',
+        submittedBy: `${effectiveReviewer} (${effectiveRole})`,
         timestamp: 'Just now',
         violationsCount: target.violations ? target.violations.length : 0,
         issue: reviewerNotes ? `Decision Note: ${reviewerNotes}` : null
       } : null;
 
+      // Webhook dispatch on decision
+      if (target && (newStatus === 'Approved' || newStatus === 'Rejected')) {
+        const eventType = newStatus === 'Approved' ? 'content.approved' : 'content.rejected';
+        try {
+          fetch('/api/webhooks/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              organisationId: target.organisationId,
+              eventType,
+              data: {
+                submissionId: id,
+                title: target.title,
+                status: newStatus,
+                score: target.score,
+                reviewer: effectiveReviewer,
+                notes: reviewerNotes
+              }
+            })
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
+      // Slack notification dispatch on governance decisions
+      if (target) {
+        let slackEvent = null;
+        if (newStatus === 'Approved') slackEvent = 'content.approved';
+        else if (newStatus === 'Rejected') slackEvent = 'content.rejected';
+        else if (newStatus === 'Changes Requested') slackEvent = 'revision.requested';
+
+        if (slackEvent) {
+          try {
+            fetch('/api/slack/dispatch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                organisationId: target.organisationId,
+                eventType: slackEvent,
+                data: {
+                  submissionId: id,
+                  title: target.title,
+                  status: newStatus,
+                  score: target.score,
+                  riskLevel: target.riskLevel,
+                  actor: effectiveReviewer,
+                  role: effectiveRole,
+                  notes: reviewerNotes,
+                  reviewLink: 'http://localhost:3000/#review-approval'
+                }
+              })
+            }).catch(() => {});
+          } catch (_) {}
+        }
+      }
+
       return {
         ...prev,
         reviews: updatedReviews,
-        activities: newActivity ? [newActivity, ...prev.activities] : prev.activities
+        activities: newActivity ? [newActivity, ...prev.activities] : prev.activities,
+        notifications: statusNotification ? [statusNotification, ...(prev.notifications || []).slice(0, 49)] : prev.notifications
       };
     });
+  };
+
+  const assignReview = (reviewId, assigneeName, managerName = null) => {
+    // Only Manager is authorized to assign or reassign reviewers
+    if (data.currentUserRole === 'Creator') {
+      throw new Error('Access Denied: Creator role cannot assign reviewers.');
+    }
+
+    const effectiveManager = managerName || currentUser.name;
+    const targetMember = defaultTeamMembers.find(m => m.name === assigneeName);
+
+    setData(prev => {
+      const target = prev.reviews.find(r => r.id === reviewId);
+      if (!target) return prev;
+      const now = new Date();
+
+      const assignAuditEvent = {
+        id: `audit-${Date.now()}-asg`,
+        type: 'assignment',
+        action: `Reviewer Assigned: ${assigneeName}`,
+        actor: effectiveManager,
+        role: 'Manager',
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        organisationId: target.organisationId,
+        submissionId: reviewId,
+        comments: `Review ownership assigned to ${assigneeName}.`
+      };
+
+      const assignNotification = {
+        id: `notif-${Date.now()}-asg`,
+        type: 'info',
+        title: `Reviewer Assigned: ${target.title}`,
+        desc: `Assigned to ${assigneeName} by Manager ${effectiveManager} for compliance review.`,
+        submissionId: reviewId,
+        link: 'review-approval',
+        organisationId: target.organisationId,
+        targetUser: assigneeName,
+        targetRole: 'Reviewer',
+        time: 'Just now',
+        timestamp: now.toISOString(),
+        read: false
+      };
+
+      const updatedReviews = prev.reviews.map(r => {
+        if (r.id === reviewId) {
+          const prevTrail = Array.isArray(r.auditTrail) ? r.auditTrail : [];
+          return {
+            ...r,
+            assignedTo: assigneeName,
+            assignedToId: targetMember?.id || null,
+            assignedBy: effectiveManager,
+            assignedAt: now.toISOString(),
+            auditTrail: [...prevTrail, assignAuditEvent]
+          };
+        }
+        return r;
+      });
+
+      // Slack dispatch for reviewer assignment
+      try {
+        fetch('/api/slack/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            organisationId: target.organisationId,
+            eventType: 'reviewer.assigned',
+            data: {
+              submissionId: reviewId,
+              title: target.title,
+              actor: effectiveManager,
+              role: 'Manager',
+              status: `Assigned to ${assigneeName}`,
+              score: target.score,
+              riskLevel: target.riskLevel,
+              notes: `Review ownership assigned to ${assigneeName} for compliance verification.`,
+              reviewLink: 'http://localhost:3000/#review-approval'
+            }
+          })
+        }).catch(() => {});
+      } catch (_) {}
+
+      return {
+        ...prev,
+        reviews: updatedReviews,
+        notifications: [assignNotification, ...(prev.notifications || []).slice(0, 49)]
+      };
+    });
+  };
+
+  const grantProductionClearance = (reviewId, clearanceNotes = '', managerName = null) => {
+    // Final clearance is strictly restricted to Manager role
+    if (data.currentUserRole !== 'Manager') {
+      throw new Error('Access Denied: Final production clearance requires Manager credentials.');
+    }
+
+    const effectiveManager = managerName || currentUser.name;
+
+    setData(prev => {
+      const target = prev.reviews.find(r => r.id === reviewId);
+      if (!target) return prev;
+      const now = new Date();
+
+      const clearanceDetails = {
+        manager: effectiveManager,
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        notes: clearanceNotes || 'Verified compliant and approved for enterprise distribution.'
+      };
+
+      const clearanceAuditEvent = {
+        id: `audit-${Date.now()}-clr`,
+        type: 'clearance',
+        action: 'Final Production Clearance Granted',
+        actor: effectiveManager,
+        role: 'Manager',
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        organisationId: target.organisationId,
+        submissionId: reviewId,
+        comments: clearanceNotes || 'Final production clearance granted by compliance management.'
+      };
+
+      const clearanceNotification = {
+        id: `notif-${Date.now()}-clr`,
+        type: 'success',
+        title: `Final Production Clearance: ${target.title}`,
+        desc: `Production clearance approved by Manager ${effectiveManager} for ${target.organisationId}.`,
+        submissionId: reviewId,
+        link: 'review-approval',
+        organisationId: target.organisationId,
+        targetRole: 'All',
+        time: 'Just now',
+        timestamp: now.toISOString(),
+        read: false
+      };
+
+      const newActivity = {
+        id: `act-${Date.now()}`,
+        title: `Production Clearance: ${target.title}`,
+        type: 'Production Clearance',
+        department: target.department,
+        status: 'Cleared for Production',
+        score: target.score,
+        submittedBy: `${effectiveManager} (Manager)`,
+        timestamp: 'Just now',
+        violationsCount: 0
+      };
+
+      const updatedReviews = prev.reviews.map(r => {
+        if (r.id === reviewId) {
+          const prevTrail = Array.isArray(r.auditTrail) ? r.auditTrail : [];
+          return {
+            ...r,
+            productionClearance: true,
+            clearanceDetails,
+            auditTrail: [...prevTrail, clearanceAuditEvent]
+          };
+        }
+        return r;
+      });
+
+      // Webhook dispatch on production clearance
+      if (target) {
+        try {
+          fetch('/api/webhooks/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              organisationId: target.organisationId,
+              eventType: 'production.clearance',
+              data: {
+                submissionId: reviewId,
+                title: target.title,
+                status: 'Cleared for Production',
+                score: target.score,
+                manager: effectiveManager,
+                clearanceNotes: clearanceDetails.notes
+              }
+            })
+          }).catch(() => {});
+        } catch (_) {}
+
+        // Slack dispatch for production clearance
+        try {
+          fetch('/api/slack/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              organisationId: target.organisationId,
+              eventType: 'production.clearance',
+              data: {
+                submissionId: reviewId,
+                title: target.title,
+                status: 'Cleared for Production',
+                score: target.score,
+                riskLevel: target.riskLevel,
+                actor: effectiveManager,
+                role: 'Manager',
+                notes: clearanceDetails.notes,
+                reviewLink: 'http://localhost:3000/#review-approval'
+              }
+            })
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
+      return {
+        ...prev,
+        reviews: updatedReviews,
+        activities: [newActivity, ...prev.activities],
+        notifications: [clearanceNotification, ...(prev.notifications || []).slice(0, 49)]
+      };
+    });
+  };
+
+  const publishApprovedAsset = async (reviewId, platform, options = {}) => {
+    const { isSimulation = false, notes = '', postStatus = 'draft' } = options;
+
+    // Check manager authorization
+    const activeRole = data.currentUserRole || 'Manager';
+    if (activeRole !== 'Manager') {
+      return {
+        success: false,
+        message: 'Access Denied: External publishing requires Manager credentials.'
+      };
+    }
+
+    const target = data.reviews.find(r => r.id === reviewId);
+    if (!target) {
+      return { success: false, message: 'Asset not found.' };
+    }
+
+    // Check Status
+    if (target.status !== 'Approved') {
+      return {
+        success: false,
+        message: 'Only Approved assets can be submitted for publishing.'
+      };
+    }
+
+    // Check Final Manager Production Clearance
+    if (!target.productionClearance) {
+      return {
+        success: false,
+        message: 'Production Clearance Required: Content must receive final Manager clearance before external dispatch.'
+      };
+    }
+
+    const activeUser = currentUser || { name: 'Alex Rivera', roleType: 'Manager' };
+    const effectiveActor = activeUser.name;
+    const effectiveRole = activeUser.roleType || activeRole;
+    const now = new Date();
+    const isSimulated = Boolean(isSimulation);
+
+    // -------------------------------------------------------------
+    // PATH 1: Genuine Live WordPress REST API Publishing
+    // -------------------------------------------------------------
+    if (!isSimulated && platform === 'WordPress CMS') {
+      try {
+        const wpRes = await fetch('/api/wordpress/publish', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-BrandGuard-Role': activeRole
+          },
+          body: JSON.stringify({
+            organisationId: target.organisationId,
+            submissionId: reviewId,
+            title: target.title,
+            content: target.originalContent || target.extractedText || target.content || target.summary || '',
+            excerpt: target.summary || '',
+            status: postStatus,
+            actor: effectiveActor,
+            role: effectiveRole,
+            isProductionCleared: Boolean(target.productionClearance)
+          })
+        });
+
+        const wpData = await wpRes.json();
+
+        if (wpRes.ok && wpData.success) {
+          const postId = wpData.post?.id;
+          const postUrl = wpData.post?.url;
+          const publishedStatus = wpData.post?.status || postStatus;
+
+          const publishAuditEvent = {
+            id: `audit-${Date.now()}-pubwp`,
+            type: 'publish_wordpress',
+            action: `Published to WordPress (Post #${postId})`,
+            actor: effectiveActor,
+            role: effectiveRole,
+            timestamp: now.toISOString(),
+            formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            organisationId: target.organisationId,
+            submissionId: reviewId,
+            comments: `WordPress REST API: Live post verified at ${postUrl} with status "${publishedStatus}". Post ID: ${postId}. ${notes}`.trim()
+          };
+
+          const historyEntry = {
+            id: `pubhist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            channel: 'WordPress CMS',
+            status: publishedStatus === 'publish' ? 'Published' : 'Draft Created',
+            isSimulation: false,
+            wordpressPostId: postId,
+            publishedUrl: postUrl,
+            timestamp: now.toISOString(),
+            formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            actor: effectiveActor,
+            role: effectiveRole,
+            notes: `Official WordPress REST API: Post #${postId} (${publishedStatus}). URL: ${postUrl}`
+          };
+
+          const publishNotification = {
+            id: `notif-${Date.now()}-pub`,
+            type: 'success',
+            title: `Asset Published: WordPress (Post #${postId})`,
+            desc: `"${target.title}" successfully published to WordPress (${publishedStatus}). Post ID: ${postId}`,
+            submissionId: reviewId,
+            organisationId: target.organisationId,
+            link: 'review-approval',
+            targetRole: 'Manager',
+            time: 'Just now',
+            timestamp: now.toISOString(),
+            read: false
+          };
+
+          setData(prev => ({
+            ...prev,
+            reviews: prev.reviews.map(r => {
+              if (r.id === reviewId) {
+                const prevTrail = Array.isArray(r.auditTrail) ? r.auditTrail : [];
+                const prevHistory = Array.isArray(r.publishingHistory) ? r.publishingHistory : [];
+                const prevChannels = Array.isArray(r.publishedChannels) ? r.publishedChannels : [];
+                return {
+                  ...r,
+                  publishingStatus: 'Published',
+                  wordpressPostId: postId,
+                  publishedUrl: postUrl,
+                  publishedChannels: Array.from(new Set([...prevChannels, `WordPress CMS (Post #${postId})`])),
+                  publishingHistory: [historyEntry, ...prevHistory],
+                  auditTrail: [...prevTrail, publishAuditEvent]
+                };
+              }
+              return r;
+            }),
+            notifications: [publishNotification, ...(prev.notifications || []).slice(0, 49)]
+          }));
+
+          // Trigger Slack notification for WordPress live publishing
+          try {
+            fetch('/api/slack/dispatch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                organisationId: target.organisationId,
+                eventType: 'wordpress.published',
+                data: {
+                  submissionId: reviewId,
+                  title: target.title,
+                  actor: effectiveActor,
+                  role: effectiveRole,
+                  status: `Published to WordPress (Post #${postId})`,
+                  score: target.score,
+                  riskLevel: target.riskLevel,
+                  notes: `Live WordPress REST API: Post #${postId} (${publishedStatus}). URL: ${postUrl}`,
+                  reviewLink: postUrl || 'http://localhost:3000/#review-approval'
+                }
+              })
+            }).catch(() => {});
+          } catch (_) {}
+
+          return {
+            success: true,
+            isSimulation: false,
+            post: wpData.post,
+            message: `Successfully published to WordPress (Post ID: ${postId}) as ${publishedStatus === 'publish' ? 'Live Post' : 'Draft'}!`
+          };
+        } else {
+          // Genuine WordPress error: DO NOT fall back to simulation!
+          const errorMsg = wpData.error || 'WordPress REST API returned a publishing error.';
+          recordPublishingFailure(reviewId, 'WordPress CMS', errorMsg, false);
+          return {
+            success: false,
+            error: errorMsg,
+            message: errorMsg
+          };
+        }
+      } catch (err) {
+        const errorMsg = `Network error contacting WordPress: ${err.message}`;
+        recordPublishingFailure(reviewId, 'WordPress CMS', errorMsg, false);
+        return {
+          success: false,
+          error: errorMsg,
+          message: errorMsg
+        };
+      }
+    }
+
+    // -------------------------------------------------------------
+    // PATH 2: Live dispatch without credentials for other platforms
+    // -------------------------------------------------------------
+    if (!isSimulated && platform !== 'Custom Webhooks' && platform !== 'WordPress CMS') {
+      const errorMsg = `Live Connection Unavailable: ${platform} requires verified API authentication credentials. Use Simulation Mode for testing or configure integration in Settings.`;
+      recordPublishingFailure(reviewId, platform, errorMsg, false);
+      return { success: false, message: errorMsg };
+    }
+
+    // -------------------------------------------------------------
+    // PATH 3: Simulation Mode or Custom Webhooks
+    // -------------------------------------------------------------
+    let result = { success: false, message: '' };
+    setData(prev => {
+      const channelLabel = isSimulated ? `${platform} (Sandbox)` : platform;
+
+      const publishAuditEvent = {
+        id: `audit-${Date.now()}-pub`,
+        type: 'publish',
+        action: isSimulated ? `Simulated Dispatch to ${platform}` : `Published to ${platform}`,
+        actor: effectiveActor,
+        role: effectiveRole,
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        organisationId: target.organisationId,
+        submissionId: reviewId,
+        comments: isSimulated
+          ? `[SIMULATION SANDBOX] Asset dispatched in demonstration sandbox mode. No live API transmission occurred. ${notes}`.trim()
+          : `Asset cleared and dispatched to ${platform} production pipeline. ${notes}`.trim()
+      };
+
+      const historyEntry = {
+        id: `pubhist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        channel: platform,
+        status: isSimulated ? 'Published (Simulated)' : 'Published',
+        isSimulation: isSimulated,
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        actor: effectiveActor,
+        role: effectiveRole,
+        notes: notes || (isSimulated ? 'Dispatched to simulation sandbox' : 'Dispatched to production')
+      };
+
+      const publishNotification = {
+        id: `notif-${Date.now()}-pub`,
+        type: 'success',
+        title: isSimulated ? `Asset Dispatched (Simulation): ${platform}` : `Asset Published: ${platform}`,
+        desc: isSimulated
+          ? `"${target.title}" was dispatched to the ${platform} sandbox. No live production publish occurred.`
+          : `"${target.title}" was successfully deployed to ${platform}.`,
+        submissionId: reviewId,
+        organisationId: target.organisationId,
+        link: 'review-approval',
+        targetRole: 'Manager',
+        time: 'Just now',
+        timestamp: now.toISOString(),
+        read: false
+      };
+
+      const newActivity = {
+        id: `act-${Date.now()}`,
+        title: `${isSimulated ? '[Sandbox] ' : ''}Published to ${platform}: ${target.title}`,
+        type: 'CMS / Social Dispatch',
+        department: target.department,
+        organisationId: target.organisationId,
+        status: 'Published',
+        score: target.score,
+        submittedBy: `${effectiveActor} (${effectiveRole})`,
+        timestamp: 'Just now',
+        violationsCount: 0
+      };
+
+      const updatedReviews = prev.reviews.map(r => {
+        if (r.id === reviewId) {
+          const prevTrail = Array.isArray(r.auditTrail) ? r.auditTrail : [];
+          const publishedChannels = Array.isArray(r.publishedChannels) ? r.publishedChannels : [];
+          const prevHistory = Array.isArray(r.publishingHistory) ? r.publishingHistory : [];
+
+          return {
+            ...r,
+            publishingStatus: 'Published',
+            publishedChannels: Array.from(new Set([...publishedChannels, channelLabel])),
+            publishingHistory: [historyEntry, ...prevHistory],
+            auditTrail: [...prevTrail, publishAuditEvent]
+          };
+        }
+        return r;
+      });
+
+      result = {
+        success: true,
+        isSimulation: isSimulated,
+        message: isSimulated
+          ? `Simulated Dispatch (Sandbox) — "${target.title}" dispatched to ${platform} test sandbox. No live external production publish occurred.`
+          : `Successfully published "${target.title}" to ${platform}!`
+      };
+
+      // Trigger webhook event async if Custom Webhooks
+      if (!isSimulated && platform === 'Custom Webhooks') {
+        try {
+          fetch('/api/webhooks/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              organisationId: target.organisationId,
+              eventType: 'content.published',
+              data: {
+                submissionId: target.id,
+                title: target.title,
+                channel: platform,
+                isSimulation: false,
+                publishedBy: effectiveActor,
+                score: target.score,
+                status: 'Published'
+              }
+            })
+          }).catch(() => {});
+        } catch (_) {}
+      }
+
+      // Trigger Slack notification for published content
+      try {
+        fetch('/api/slack/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            organisationId: target.organisationId,
+            eventType: 'content.published',
+            data: {
+              submissionId: target.id,
+              title: target.title,
+              actor: effectiveActor,
+              role: effectiveRole,
+              status: isSimulated ? `Dispatched to ${platform} (Simulated)` : `Published to ${platform}`,
+              score: target.score,
+              riskLevel: target.riskLevel,
+              notes: notes || `Dispatched to ${platform}`,
+              reviewLink: 'http://localhost:3000/#review-approval'
+            }
+          })
+        }).catch(() => {});
+      } catch (_) {}
+
+      return {
+        ...prev,
+        reviews: updatedReviews,
+        activities: [newActivity, ...prev.activities],
+        notifications: [publishNotification, ...(prev.notifications || []).slice(0, 49)]
+      };
+    });
+
+    return result;
+  };
+
+  const recordPublishingFailure = (reviewId, platform, errorMessage, isSimulation = false) => {
+    let result = { success: false, message: errorMessage };
+    setData(prev => {
+      const target = prev.reviews.find(r => r.id === reviewId);
+      if (!target) return prev;
+      const now = new Date();
+      const activeUser = currentUser || { name: 'Alex Rivera', roleType: 'Manager' };
+      const effectiveActor = activeUser.name;
+      const effectiveRole = activeUser.roleType || 'Manager';
+
+      const failureEntry = {
+        id: `pubhist-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        channel: platform,
+        status: 'Failed',
+        isSimulation: Boolean(isSimulation),
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        actor: effectiveActor,
+        role: effectiveRole,
+        notes: errorMessage
+      };
+
+      const failureAuditEvent = {
+        id: `audit-${Date.now()}-pubfail`,
+        type: 'publish_failed',
+        action: `Publish Failed to ${platform}`,
+        actor: effectiveActor,
+        role: effectiveRole,
+        timestamp: now.toISOString(),
+        formattedTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        formattedDate: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        organisationId: target.organisationId,
+        submissionId: reviewId,
+        comments: `Publishing failed: ${errorMessage}`
+      };
+
+      const updatedReviews = prev.reviews.map(r => {
+        if (r.id === reviewId) {
+          const prevTrail = Array.isArray(r.auditTrail) ? r.auditTrail : [];
+          const prevHistory = Array.isArray(r.publishingHistory) ? r.publishingHistory : [];
+          return {
+            ...r,
+            publishingStatus: 'Failed',
+            publishingHistory: [failureEntry, ...prevHistory],
+            auditTrail: [...prevTrail, failureAuditEvent]
+          };
+        }
+        return r;
+      });
+
+      return {
+        ...prev,
+        reviews: updatedReviews
+      };
+    });
+    return result;
+  };
+
+  const fetchWebhookConfig = async (orgId) => {
+    try {
+      const res = await fetch(`/api/webhooks/config?organisationId=${encodeURIComponent(orgId || currentOrg)}`);
+      const dataRes = await res.json();
+      return dataRes.config || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const saveWebhookSettings = async (updates, orgId) => {
+    try {
+      const res = await fetch('/api/webhooks/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager',
+          ...updates
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const testWebhookEndpoint = async (orgId) => {
+    try {
+      const res = await fetch('/api/webhooks/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager'
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const fetchWordPressConfig = async (orgId) => {
+    try {
+      const res = await fetch(`/api/wordpress/config?organisationId=${encodeURIComponent(orgId || currentOrg)}`);
+      const dataRes = await res.json();
+      return dataRes.config || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const connectWordPress = async (orgId, { wpUrl, username, appPassword }) => {
+    try {
+      const res = await fetch('/api/wordpress/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager',
+          wpUrl,
+          username,
+          appPassword
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, status: 'Authentication Failed', error: err.message };
+    }
+  };
+
+  const disconnectWordPress = async (orgId) => {
+    try {
+      const res = await fetch('/api/wordpress/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager'
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  // Slack Integration API Helpers
+  const fetchSlackConfig = async (orgId) => {
+    try {
+      const target = orgId || currentOrg;
+      const res = await fetch(`/api/slack/config?organisation=${encodeURIComponent(target)}`);
+      const dataRes = await res.json();
+      return dataRes.config || dataRes || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const connectSlack = async (orgId, { webhookUrl, channel, isSimulation }) => {
+    try {
+      const res = await fetch('/api/slack/connect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager',
+          webhookUrl,
+          channel,
+          isSimulation
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const testSlackNotification = async (orgId) => {
+    try {
+      const res = await fetch('/api/slack/test', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager'
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const disconnectSlack = async (orgId) => {
+    try {
+      const res = await fetch('/api/slack/disconnect', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-BrandGuard-Role': data.currentUserRole || 'Manager'
+        },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          role: data.currentUserRole || 'Manager'
+        })
+      });
+      const dataRes = await res.json();
+      return dataRes;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const dispatchSlackNotificationEvent = async (orgId, eventType, eventData = {}) => {
+    try {
+      const res = await fetch('/api/slack/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          organisationId: orgId || currentOrg,
+          eventType,
+          data: eventData
+        })
+      });
+      return await res.json();
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const setCurrentUserRole = (role) => {
+    setData(prev => ({
+      ...prev,
+      currentUserRole: role
+    }));
+  };
+
+  const addNotification = (notif) => {
+    const newNotif = {
+      id: `notif-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      type: notif.type || 'info',
+      title: notif.title,
+      desc: notif.desc || '',
+      link: notif.link || null,
+      submissionId: notif.submissionId || null,
+      time: 'Just now',
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    setData(prev => ({
+      ...prev,
+      notifications: [newNotif, ...(prev.notifications || []).slice(0, 49)]
+    }));
+    return newNotif;
+  };
+
+  const clearNotifications = () => {
+    setData(prev => ({
+      ...prev,
+      notifications: []
+    }));
+  };
+
+  const markNotificationRead = (id) => {
+    setData(prev => ({
+      ...prev,
+      notifications: (prev.notifications || []).map(n => n.id === id ? { ...n, read: true } : n)
+    }));
   };
 
   const updateSettings = (newSettings) => {
@@ -706,6 +1851,119 @@ export function BrandGuardProvider({ children }) {
       ...prev,
       colorTokens: [...prev.colorTokens, token]
     }));
+  };
+
+  const addLogoAsset = (logo) => {
+    const targetOrg = logo.organisation || currentOrg;
+    const isFirstForOrg = !(data.logoAssets || []).some(l => matchesOrganisation(l.organisation, targetOrg));
+    const shouldBePrimary = logo.isPrimary !== undefined ? logo.isPrimary : isFirstForOrg;
+
+    const newLogo = {
+      id: `logo-${Date.now()}`,
+      name: logo.name || 'Master Logo',
+      fileName: logo.fileName || 'logo.png',
+      fileType: logo.fileType || 'PNG',
+      variant: logo.variant || 'Primary Master',
+      previewUrl: logo.previewUrl,
+      pngBase64: logo.pngBase64 || (logo.previewUrl ? logo.previewUrl.replace(/^data:[^;]+;base64,/, '') : ''),
+      svgContent: logo.svgContent || '',
+      mimeType: logo.mimeType || (logo.fileType === 'SVG' ? 'image/svg+xml' : 'image/png'),
+      fileSize: logo.fileSize || '150 KB',
+      organisation: targetOrg,
+      isPrimary: shouldBePrimary,
+      createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      notes: logo.notes || 'Approved brand logo asset'
+    };
+
+    const newActivity = {
+      id: `act-${Date.now()}`,
+      title: `Approved Logo Registered: ${newLogo.name} (${newLogo.fileType})`,
+      type: 'Brand Asset Registration',
+      department: 'Brand Hub',
+      organisationId: targetOrg,
+      status: 'Approved',
+      score: 100,
+      submittedBy: 'Workspace Administrator',
+      timestamp: 'Just now',
+      violationsCount: 0
+    };
+
+    setData(prev => {
+      const existing = (prev.logoAssets || []).map(l => {
+        if (shouldBePrimary && matchesOrganisation(l.organisation, targetOrg)) {
+          return { ...l, isPrimary: false };
+        }
+        return l;
+      });
+
+      return {
+        ...prev,
+        logoAssets: [newLogo, ...existing],
+        activities: [newActivity, ...prev.activities],
+        organisations: Array.from(new Set([...(prev.organisations || defaultOrgs), targetOrg]))
+      };
+    });
+
+    addNotification({
+      type: 'success',
+      title: 'Master Logo Approved',
+      desc: `Registered ${newLogo.name} for ${targetOrg} visual verification.`
+    });
+
+    return newLogo;
+  };
+
+  const deleteLogoAsset = (id) => {
+    setData(prev => {
+      const logoToDelete = (prev.logoAssets || []).find(l => l.id === id);
+      const remaining = (prev.logoAssets || []).filter(l => l.id !== id);
+
+      if (logoToDelete && logoToDelete.isPrimary) {
+        const nextForOrg = remaining.find(l => matchesOrganisation(l.organisation, logoToDelete.organisation));
+        if (nextForOrg) {
+          nextForOrg.isPrimary = true;
+        }
+      }
+
+      const newActivity = logoToDelete ? {
+        id: `act-${Date.now()}`,
+        title: `Removed Logo Asset: ${logoToDelete.name}`,
+        type: 'Brand Asset Removal',
+        department: 'Brand Hub',
+        organisationId: logoToDelete.organisation,
+        status: 'Approved',
+        score: 100,
+        submittedBy: 'Workspace Administrator',
+        timestamp: 'Just now',
+        violationsCount: 0
+      } : null;
+
+      return {
+        ...prev,
+        logoAssets: remaining,
+        activities: newActivity ? [newActivity, ...prev.activities] : prev.activities
+      };
+    });
+  };
+
+  const setPrimaryLogoAsset = (id) => {
+    setData(prev => {
+      const targetLogo = (prev.logoAssets || []).find(l => l.id === id);
+      if (!targetLogo) return prev;
+      const targetOrg = targetLogo.organisation;
+
+      const updated = (prev.logoAssets || []).map(l => {
+        if (matchesOrganisation(l.organisation, targetOrg)) {
+          return { ...l, isPrimary: l.id === id };
+        }
+        return l;
+      });
+
+      return {
+        ...prev,
+        logoAssets: updated
+      };
+    });
   };
 
   const setSelectedOrganisation = (org) => {
@@ -733,6 +1991,7 @@ export function BrandGuardProvider({ children }) {
       activities: [],
       notifications: [],
       colorTokens: [],
+      logoAssets: getDefaultLogoAssets(),
       organisations: defaultOrgs,
       settings: {
         sensitivity: 85,
@@ -756,8 +2015,10 @@ export function BrandGuardProvider({ children }) {
         manualGuidelines: orgManualGuidelines,
         reviews: orgReviews,
         activities: orgActivities,
-        notifications: data.notifications,
-        colorTokens: data.colorTokens,
+        notifications: orgNotifications,
+        allNotifications: data.notifications || [],
+        colorTokens: orgColorTokens,
+        allColorTokens: data.colorTokens,
         settings: data.settings,
         selectedOrganisation: currentOrg,
         setSelectedOrganisation,
@@ -776,11 +2037,39 @@ export function BrandGuardProvider({ children }) {
         addManualGuideline,
         updateManualGuideline,
         deleteManualGuideline,
+        currentUser,
+        currentUserRole: data.currentUserRole || 'Manager',
+        setCurrentUserRole,
+        teamMembers: defaultTeamMembers,
+        assignReview,
+        grantProductionClearance,
+        publishApprovedAsset,
+        recordPublishingFailure,
+        fetchWebhookConfig,
+        saveWebhookSettings,
+        testWebhookEndpoint,
+        fetchWordPressConfig,
+        connectWordPress,
+        disconnectWordPress,
+        fetchSlackConfig,
+        connectSlack,
+        testSlackNotification,
+        disconnectSlack,
+        dispatchSlackNotificationEvent,
+        addNotification,
+        clearNotifications,
+        markNotificationRead,
         addReviewSubmission,
         updateReviewStatus,
         updateReviewWithReanalysis,
         updateSettings,
         addColorToken,
+        logoAssets: orgLogoAssets,
+        allLogoAssets: data.logoAssets || [],
+        primaryOrgLogo,
+        addLogoAsset,
+        deleteLogoAsset,
+        setPrimaryLogoAsset,
         clearAllData
       }}
     >

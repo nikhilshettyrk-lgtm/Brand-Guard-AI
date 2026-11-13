@@ -16,10 +16,19 @@ import {
   Copy,
   Check,
   Palette,
-  Loader2
+  Loader2,
+  ShieldCheck,
+  Image as ImageIcon,
+  Star,
+  Maximize2
 } from 'lucide-react';
 import { useBrandGuard } from '../context/BrandGuardContext';
 import { extractTextFromFile } from '../utils/documentExtractor';
+import {
+  validateLogoFile,
+  rasterizeSvgToPngDataUrl,
+  svgToDataUrl
+} from '../utils/logoAssetHelper';
 
 export default function BrandKnowledgeHub() {
   const {
@@ -32,7 +41,12 @@ export default function BrandKnowledgeHub() {
     deleteManualGuideline,
     colorTokens,
     addColorToken,
-    selectedOrganisation
+    selectedOrganisation,
+    logoAssets,
+    primaryOrgLogo,
+    addLogoAsset,
+    deleteLogoAsset,
+    setPrimaryLogoAsset
   } = useBrandGuard();
 
   // Search & Filters
@@ -60,6 +74,124 @@ export default function BrandKnowledgeHub() {
   const [viewingDoc, setViewingDoc] = useState(null);
   const [viewingDocRules, setViewingDocRules] = useState(null);
   const [copiedText, setCopiedText] = useState(false);
+
+  // Master Logo Asset Modal State
+  const logoFileInputRef = useRef(null);
+  const [showLogoModal, setShowLogoModal] = useState(false);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState('');
+  const [logoPngBase64, setLogoPngBase64] = useState('');
+  const [logoSvgContent, setLogoSvgContent] = useState('');
+  const [logoFileType, setLogoFileType] = useState('PNG');
+  const [logoName, setLogoName] = useState('');
+  const [logoVariant, setLogoVariant] = useState('Primary Master');
+  const [logoNotes, setLogoNotes] = useState('');
+  const [isPrimaryLogo, setIsPrimaryLogo] = useState(true);
+  const [logoError, setLogoError] = useState('');
+  const [isProcessingLogo, setIsProcessingLogo] = useState(false);
+  const [zoomLogoModal, setZoomLogoModal] = useState(null);
+
+  const handleOpenLogoModal = () => {
+    setLogoFile(null);
+    setLogoPreviewUrl('');
+    setLogoPngBase64('');
+    setLogoSvgContent('');
+    setLogoFileType('PNG');
+    setLogoName('');
+    setLogoVariant('Primary Master');
+    setLogoNotes('');
+    setIsPrimaryLogo(logoAssets.length === 0);
+    setLogoError('');
+    setShowLogoModal(true);
+  };
+
+  const handleLogoFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLogoError('');
+    setIsProcessingLogo(true);
+
+    try {
+      const validation = validateLogoFile(file);
+      setLogoFile(file);
+      setLogoFileType(validation.extension);
+
+      const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      if (!logoName.trim()) {
+        setLogoName(`${baseName.replace(/[-_]/g, ' ')} Master Logo`);
+      }
+
+      if (validation.extension === 'SVG') {
+        const text = await file.text();
+        if (!text.includes('<svg') || !text.includes('</svg>')) {
+          throw new Error('Invalid SVG file structure. Please upload a valid vector SVG.');
+        }
+        setLogoSvgContent(text);
+        const dataUrl = svgToDataUrl(text);
+        setLogoPreviewUrl(dataUrl);
+
+        try {
+          const pngUrl = await rasterizeSvgToPngDataUrl(dataUrl, 512, 256);
+          const rawBase64 = pngUrl ? pngUrl.replace(/^data:[^;]+;base64,/, '') : '';
+          setLogoPngBase64(rawBase64);
+        } catch (rasterErr) {
+          console.warn('Canvas rasterization fallback:', rasterErr);
+        }
+      } else {
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          const result = evt.target.result;
+          setLogoPreviewUrl(result);
+          const rawBase64 = result ? result.replace(/^data:[^;]+;base64,/, '') : '';
+          setLogoPngBase64(rawBase64);
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      setLogoError(err.message || 'Failed to process logo file.');
+      setLogoFile(null);
+      setLogoPreviewUrl('');
+    } finally {
+      setIsProcessingLogo(false);
+      if (logoFileInputRef.current) logoFileInputRef.current.value = '';
+    }
+  };
+
+  const handleSaveLogoAsset = (e) => {
+    e.preventDefault();
+    if (!logoPreviewUrl) {
+      setLogoError('Please upload an approved PNG or SVG logo first.');
+      return;
+    }
+    if (!logoName.trim()) {
+      setLogoError('Please enter a name for this logo asset.');
+      return;
+    }
+
+    const formatSize = (bytes) => {
+      if (!bytes) return '150 KB';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1048576).toFixed(1)} MB`;
+    };
+
+    addLogoAsset({
+      name: logoName.trim(),
+      fileName: logoFile?.name || `${logoName.toLowerCase().replace(/\s+/g, '-')}.${logoFileType.toLowerCase()}`,
+      fileType: logoFileType,
+      variant: logoVariant,
+      previewUrl: logoPreviewUrl,
+      pngBase64: logoPngBase64,
+      svgContent: logoSvgContent,
+      fileSize: formatSize(logoFile?.size),
+      organisation: selectedOrganisation,
+      isPrimary: isPrimaryLogo,
+      notes: logoNotes.trim() || `Approved ${logoVariant} for ${selectedOrganisation}`
+    });
+
+    setShowLogoModal(false);
+  };
 
   // Suggested Categories
   const categories = [
@@ -229,7 +361,7 @@ export default function BrandKnowledgeHub() {
 
   return (
     <div className="space-y-7 max-w-7xl mx-auto pb-16">
-      {/* Hidden File Input */}
+      {/* Hidden File Inputs */}
       <input
         type="file"
         ref={fileInputRef}
@@ -237,28 +369,43 @@ export default function BrandKnowledgeHub() {
         accept=".pdf,.docx,.txt"
         className="hidden"
       />
+      <input
+        type="file"
+        ref={logoFileInputRef}
+        onChange={handleLogoFileSelect}
+        accept=".png,.svg"
+        className="hidden"
+      />
 
       {/* Top Banner with Prominent Action Buttons */}
       <div className="neu-card p-6 flex flex-col md:flex-row md:items-center justify-between gap-5">
         <div>
-          <div className="flex items-center gap-2 mb-1.5">
+          <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[#536DFE]/15 text-[#536DFE]">
-              Guideline Management
+              Brand Governance & Visual Assets
             </span>
             <span className="text-xs text-[#8A99AD] font-medium">
-              {uploadedDocuments.length} Documents • {manualGuidelines.length} Codified Rules
+              Org: <strong className="text-[#202B45]">{selectedOrganisation}</strong> • {uploadedDocuments.length} Docs • {logoAssets.length} Logos • {manualGuidelines.length} Rules
             </span>
           </div>
           <h2 className="text-2xl md:text-3xl font-extrabold text-[#202B45] tracking-tight">
             Brand Knowledge Hub
           </h2>
           <p className="text-xs md:text-sm text-[#5E6E82] font-medium mt-1">
-            Ingest brand rulebooks from files or author codified policies to govern content across all channels.
+            Ingest brand rulebooks, register approved master logo assets, and codify compliance policies.
           </p>
         </div>
 
         {/* Prominent Action Buttons */}
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleOpenLogoModal}
+            className="neu-btn px-3.5 py-2.5 text-xs md:text-sm font-bold text-[#202B45] flex items-center gap-2 hover:text-[#10B981]"
+          >
+            <ShieldCheck className="w-4 h-4 text-[#10B981]" />
+            Upload Master Logo
+          </button>
+
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={isProcessingUpload}
@@ -277,7 +424,7 @@ export default function BrandKnowledgeHub() {
             className="neu-btn-primary px-4 py-2.5 text-xs md:text-sm font-bold flex items-center gap-2 shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            Add Guideline Manually
+            Add Rule
           </button>
         </div>
       </div>
@@ -480,7 +627,152 @@ export default function BrandKnowledgeHub() {
         )}
       </div>
 
-      {/* SECTION 2: CODIFIED BRAND GUIDELINES */}
+      {/* SECTION 2: APPROVED MASTER BRAND LOGOS (VISUAL REFERENCE ASSETS) */}
+      <div className="space-y-4 pt-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold text-[#202B45]">
+                Approved Brand Master Logos
+              </h3>
+              <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#10B981]/15 text-[#047857]">
+                {logoAssets.length}
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/70 text-[#5E6E82] border border-[#D1D9E6]">
+                {selectedOrganisation}
+              </span>
+            </div>
+            <p className="text-xs text-[#5E6E82] mt-0.5">
+              Official vector SVG and PNG master assets supplied to Gemini multimodal engine for comparative visual verification.
+            </p>
+          </div>
+          <button
+            onClick={handleOpenLogoModal}
+            className="neu-btn px-3 py-1.5 text-xs font-bold text-[#10B981] hover:text-[#059669] flex items-center gap-1.5 self-start sm:self-auto"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Upload Master Logo
+          </button>
+        </div>
+
+        {logoAssets.length === 0 ? (
+          <div className="neu-card p-8 text-center flex flex-col items-center justify-center">
+            <div className="w-12 h-12 rounded-2xl bg-white/70 neu-card-sm flex items-center justify-center text-[#10B981] mb-3">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <h4 className="text-sm font-bold text-[#202B45]">No approved master logos on file for {selectedOrganisation}</h4>
+            <p className="text-xs text-[#5E6E82] max-w-md mt-1 mb-4">
+              Upload your official master logo (PNG or SVG) so Gemini can visually cross-examine submitted creatives against exact brand dimensions, colors, and contours.
+            </p>
+            <button
+              onClick={handleOpenLogoModal}
+              className="neu-btn px-4 py-2 text-xs font-bold text-[#10B981] flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              Upload First Master Logo
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {logoAssets.map((logo) => (
+              <div
+                key={logo.id}
+                className={`neu-card p-5 flex flex-col justify-between group hover:-translate-y-0.5 transition-all border ${
+                  logo.isPrimary ? 'border-[#10B981]/50 shadow-sm' : 'border-white/80'
+                }`}
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/80 text-[#5E6E82] border border-[#D1D9E6]">
+                        {logo.fileType}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#536DFE]/15 text-[#536DFE]">
+                        {logo.variant}
+                      </span>
+                    </div>
+
+                    {logo.isPrimary && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#10B981]/15 text-[#047857] flex items-center gap-1">
+                        <Star className="w-3 h-3 fill-[#10B981]" />
+                        Primary Reference
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Logo Preview Container with clean backdrop */}
+                  <div className="relative h-28 rounded-xl bg-white/90 neu-card-sm border border-white/80 p-3 flex items-center justify-center overflow-hidden mb-3 group/preview">
+                    <img
+                      src={logo.previewUrl}
+                      alt={logo.name}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setZoomLogoModal(logo)}
+                      className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white opacity-0 group-hover/preview:opacity-100 transition-opacity"
+                      title="Inspect High-Res Logo"
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <h4 className="text-sm font-bold text-[#202B45] truncate" title={logo.name}>
+                    {logo.name}
+                  </h4>
+                  <div className="flex items-center gap-2 text-xs text-[#8A99AD] mt-1 flex-wrap">
+                    <span>{logo.fileName}</span>
+                    <span>•</span>
+                    <span>{logo.fileSize}</span>
+                  </div>
+                  {logo.notes && (
+                    <p className="text-[11px] text-[#5E6E82] mt-2 line-clamp-2 italic">
+                      "{logo.notes}"
+                    </p>
+                  )}
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-[#D5DDE7]/70 flex items-center justify-between text-xs">
+                  <div>
+                    {!logo.isPrimary ? (
+                      <button
+                        onClick={() => setPrimaryLogoAsset(logo.id)}
+                        className="text-[11px] font-bold text-[#536DFE] hover:underline flex items-center gap-1"
+                      >
+                        <Star className="w-3 h-3" />
+                        Set as Primary
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-[#059669] font-bold">
+                        Active Verification Model
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setZoomLogoModal(logo)}
+                      className="neu-btn px-2.5 py-1.5 text-xs font-bold text-[#536DFE] flex items-center gap-1 hover:text-[#4258E8]"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      View
+                    </button>
+                    <button
+                      onClick={() => deleteLogoAsset(logo.id)}
+                      className="neu-btn px-2 py-1.5 text-xs font-bold text-[#EF4444] hover:bg-red-50"
+                      title="Delete logo asset"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 3: CODIFIED BRAND GUIDELINES */}
       <div className="space-y-4 pt-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -833,6 +1125,215 @@ export default function BrandKnowledgeHub() {
                 className="neu-btn px-4 py-2 text-xs font-bold text-[#202B45]"
               >
                 Close Rule Inspector
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: UPLOAD & REGISTER APPROVED MASTER LOGO */}
+      {showLogoModal && (
+        <div className="fixed inset-0 z-50 bg-[#202B45]/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="neu-card w-full max-w-lg p-6 md:p-8 space-y-4 border border-white relative max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150">
+            <button
+              onClick={() => setShowLogoModal(false)}
+              className="absolute top-5 right-5 neu-icon-btn !w-9 !h-9 text-[#5E6E82] hover:text-[#202B45]"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-[#10B981]/15 text-[#10B981] flex items-center justify-center neu-btn">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-[#202B45]">
+                  Register Master Brand Logo
+                </h3>
+                <p className="text-xs text-[#5E6E82]">
+                  Target Organisation: <strong>{selectedOrganisation}</strong>
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveLogoAsset} className="space-y-4 pt-2">
+              {/* Dropzone for logo */}
+              <div>
+                <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block mb-1">
+                  Logo Asset File (PNG or SVG) *
+                </label>
+                <div
+                  onClick={() => logoFileInputRef.current?.click()}
+                  className="neu-input p-5 rounded-2xl border-2 border-dashed border-[#D1D9E6] hover:border-[#536DFE] transition-all cursor-pointer text-center bg-white/40 flex flex-col items-center justify-center group"
+                >
+                  {isProcessingLogo ? (
+                    <div className="flex flex-col items-center gap-2 py-3">
+                      <Loader2 className="w-7 h-7 animate-spin text-[#536DFE]" />
+                      <span className="text-xs font-semibold text-[#5E6E82]">Processing & validating logo format...</span>
+                    </div>
+                  ) : logoPreviewUrl ? (
+                    <div className="space-y-2 w-full flex flex-col items-center">
+                      <div className="h-24 max-w-full p-2 rounded-xl bg-white/90 border border-white flex items-center justify-center">
+                        <img
+                          src={logoPreviewUrl}
+                          alt="Uploaded Logo Preview"
+                          className="max-h-full max-w-full object-contain"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-[#10B981] font-bold">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>{logoFile?.name || 'Logo Loaded'} ({logoFileType})</span>
+                      </div>
+                      <span className="text-[10px] text-[#536DFE] hover:underline">
+                        Click to choose a different logo
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1 py-3">
+                      <UploadCloud className="w-8 h-8 text-[#536DFE] mx-auto group-hover:scale-110 transition-transform" />
+                      <p className="text-xs font-bold text-[#202B45]">
+                        Click or drag logo file here
+                      </p>
+                      <p className="text-[11px] text-[#8A99AD]">
+                        Supports PNG or SVG (Max 5MB)
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {logoError && (
+                <div className="p-3 rounded-xl bg-[#EF4444]/15 border border-[#EF4444]/30 text-[#B91C1C] text-xs font-bold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>{logoError}</span>
+                </div>
+              )}
+
+              {/* Logo Name */}
+              <div>
+                <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block mb-1">
+                  Logo Asset Name *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Primary Horizontal Lockup"
+                  value={logoName}
+                  onChange={(e) => setLogoName(e.target.value)}
+                  className="neu-input w-full px-3.5 py-2 text-xs font-bold text-[#202B45]"
+                  required
+                />
+              </div>
+
+              {/* Variant and Primary Selector */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block mb-1">
+                    Asset Variant *
+                  </label>
+                  <select
+                    value={logoVariant}
+                    onChange={(e) => setLogoVariant(e.target.value)}
+                    className="neu-input w-full px-3 py-2 text-xs font-bold text-[#202B45]"
+                  >
+                    <option value="Primary Master">Primary Master Logo</option>
+                    <option value="Secondary / Mark">Secondary / Icon Mark</option>
+                    <option value="Dark Theme">Dark Theme Lockup</option>
+                    <option value="Light / Monochrome">Monochrome / White</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col justify-end pb-1">
+                  <label className="flex items-center gap-2 cursor-pointer p-2 rounded-xl bg-white/60 neu-card-sm border border-white">
+                    <input
+                      type="checkbox"
+                      checked={isPrimaryLogo}
+                      onChange={(e) => setIsPrimaryLogo(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#10B981] focus:ring-[#10B981] cursor-pointer"
+                    />
+                    <span className="text-xs font-bold text-[#202B45]">
+                      Primary Verification Reference
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block mb-1">
+                  Usage Guidelines & Notes
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Minimum clear space 20px, do not place on busy backgrounds"
+                  value={logoNotes}
+                  onChange={(e) => setLogoNotes(e.target.value)}
+                  className="neu-input w-full px-3.5 py-2 text-xs text-[#202B45]"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#D5DDE7]/70">
+                <button
+                  type="button"
+                  onClick={() => setShowLogoModal(false)}
+                  className="neu-btn px-4 py-2 text-xs font-bold text-[#5E6E82]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!logoPreviewUrl || isProcessingLogo}
+                  className={`neu-btn-primary px-5 py-2 text-xs font-bold flex items-center gap-1.5 ${
+                    !logoPreviewUrl || isProcessingLogo ? 'opacity-50 cursor-not-allowed' : ''
+                  }`}
+                >
+                  <Check className="w-4 h-4" />
+                  Save Approved Logo
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: ZOOM HIGH-RES LOGO */}
+      {zoomLogoModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="neu-card max-w-2xl w-full p-6 bg-[#E8ECF3] border border-white shadow-2xl space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-[#202B45]">{zoomLogoModal.name}</h3>
+                <p className="text-xs text-[#5E6E82]">
+                  {zoomLogoModal.fileType} • {zoomLogoModal.variant} • {zoomLogoModal.organisation}
+                </p>
+              </div>
+              <button
+                onClick={() => setZoomLogoModal(null)}
+                className="neu-btn p-2 text-[#5E6E82] hover:text-[#202B45]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="h-64 rounded-2xl bg-white/95 p-6 border border-white flex items-center justify-center overflow-hidden">
+              <img
+                src={zoomLogoModal.previewUrl}
+                alt={zoomLogoModal.name}
+                className="max-h-full max-w-full object-contain"
+              />
+            </div>
+
+            {zoomLogoModal.notes && (
+              <p className="text-xs text-[#5E6E82] italic bg-white/60 p-3 rounded-xl border border-white">
+                "{zoomLogoModal.notes}"
+              </p>
+            )}
+
+            <div className="flex justify-end">
+              <button
+                onClick={() => setZoomLogoModal(null)}
+                className="neu-btn px-4 py-2 text-xs font-bold text-[#202B45]"
+              >
+                Close Preview
               </button>
             </div>
           </div>

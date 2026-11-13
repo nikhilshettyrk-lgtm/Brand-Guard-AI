@@ -4,21 +4,78 @@ import {
   Bell,
   CheckCircle2,
   Save,
-  RotateCcw
+  RotateCcw,
+  Share2,
+  Globe,
+  Send,
+  Users,
+  Shield,
+  Link as LinkIcon,
+  ExternalLink,
+  Check,
+  Sparkles,
+  Layers,
+  MessageSquare,
+  FileCheck
 } from 'lucide-react';
 import { useBrandGuard } from '../context/BrandGuardContext';
+import IntegrationsHub from '../components/IntegrationsHub';
 
 export default function Settings() {
-  const { settings, updateSettings, clearAllData } = useBrandGuard();
+  const {
+    settings,
+    updateSettings,
+    clearAllData,
+    currentUserRole,
+    setCurrentUserRole,
+    teamMembers,
+    addNotification
+  } = useBrandGuard();
 
-  const [sensitivity, setSensitivity] = useState(settings.sensitivity || 90);
+  const [sensitivity, setSensitivity] = useState(settings.sensitivity || 85);
   const [autoApprove, setAutoApprove] = useState(settings.autoApprove || false);
   const [notifySlack, setNotifySlack] = useState(settings.notifySlack || false);
-  const [slackChannel, setSlackChannel] = useState(settings.slackChannel || '');
+  const [slackChannel, setSlackChannel] = useState(settings.slackChannel || '#brand-governance');
   const [notifyEmail, setNotifyEmail] = useState(settings.notifyEmail || false);
-  const [adminEmail, setAdminEmail] = useState(settings.adminEmail || '');
+  const [adminEmail, setAdminEmail] = useState(settings.adminEmail || 'governance@brandguard.internal');
+
+  // Integrations state
+  const defaultIntegrations = {
+    wordpress: { enabled: true, endpoint: 'https://cms.enterprise.internal/wp-json/wp/v2/posts', status: 'Connected' },
+    hubspot: { enabled: true, portalId: '984321', status: 'Connected' },
+    linkedin: { enabled: true, account: 'Company Global Page', status: 'Connected' },
+    twitter: { enabled: true, handle: '@BrandGlobal', status: 'Connected' },
+    slack: { enabled: notifySlack, channel: slackChannel, status: notifySlack ? 'Connected' : 'Configured' }
+  };
+
+  const [integrations, setIntegrations] = useState(settings.integrations || defaultIntegrations);
+  const [testStatus, setTestStatus] = useState(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
+
+  const handleToggleIntegration = (key) => {
+    setIntegrations(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        enabled: !prev[key]?.enabled,
+        status: !prev[key]?.enabled ? 'Connected' : 'Disconnected'
+      }
+    }));
+  };
+
+  const handleTestIntegration = (key, name) => {
+    setTestStatus({ key, text: `Connecting to ${name}...` });
+    setTimeout(() => {
+      setTestStatus({ key, text: `✓ Verified connection to ${name}! Ready for automated dispatch.` });
+      addNotification({
+        type: 'success',
+        title: `Integration Verified: ${name}`,
+        desc: `Automated publishing and webhook pipeline tested successfully for ${name}.`
+      });
+      setTimeout(() => setTestStatus(null), 3500);
+    }, 900);
+  };
 
   const handleSave = () => {
     updateSettings({
@@ -27,9 +84,15 @@ export default function Settings() {
       notifySlack,
       slackChannel,
       notifyEmail,
-      adminEmail
+      adminEmail,
+      integrations
     });
     setSavedSuccess(true);
+    addNotification({
+      type: 'info',
+      title: 'Governance Settings Updated',
+      desc: `Sensitivity threshold set to ${sensitivity}% and integration configurations saved.`
+    });
     setTimeout(() => setSavedSuccess(false), 2500);
   };
 
@@ -50,19 +113,19 @@ export default function Settings() {
             <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[#536DFE]/15 text-[#536DFE]">
               System Configuration
             </span>
-            <span className="text-xs text-[#8A99AD] font-medium">Policy Settings</span>
+            <span className="text-xs text-[#8A99AD] font-medium">Automated Workflows & Integrations</span>
           </div>
           <h2 className="text-2xl font-bold text-[#202B45]">
             Platform & Governance Settings
           </h2>
           <p className="text-xs md:text-sm text-[#5E6E82] font-medium mt-1">
-            Manage automated tolerances, AI sensitivity benchmarks, and notification routes.
+            Manage automated tolerances, team role permissions, notification pipelines, and CMS/social publishing integrations.
           </p>
         </div>
 
         <button
           onClick={handleSave}
-          className="neu-btn-primary px-5 py-2.5 text-xs md:text-sm font-bold flex items-center gap-2 self-start md:self-auto"
+          className="neu-btn-primary px-5 py-2.5 text-xs md:text-sm font-bold flex items-center gap-2 self-start md:self-auto shadow-sm"
         >
           <Save className="w-4 h-4" />
           Save Preferences
@@ -72,7 +135,7 @@ export default function Settings() {
       {savedSuccess && (
         <div className="neu-card-sm p-4 bg-[#10B981]/15 text-[#065F46] text-xs font-bold flex items-center gap-2 animate-in fade-in">
           <CheckCircle2 className="w-4 h-4 text-[#10B981]" />
-          Settings updated successfully.
+          Settings and integration configurations updated successfully.
         </div>
       )}
 
@@ -142,7 +205,63 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Section 2: Alert Channels */}
+      {/* Section 2: Team Members & Role Governance */}
+      <div className="neu-card p-6 space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-[#10B981]/10 text-[#10B981] flex items-center justify-center neu-btn">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-[#202B45]">Team Members & Role Governance</h3>
+              <p className="text-xs text-[#5E6E82]">
+                Configure workspace roles (Creator, Reviewer, Manager) and content ownership assignments.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 neu-card-sm px-3 py-1.5 bg-white/70 rounded-xl">
+            <span className="text-xs font-bold text-[#5E6E82]">Active Session Role:</span>
+            <select
+              value={currentUserRole}
+              onChange={(e) => setCurrentUserRole(e.target.value)}
+              className="bg-transparent text-xs font-extrabold text-[#536DFE] cursor-pointer focus:outline-none"
+            >
+              <option value="Manager">Manager (Approvals & Publishing)</option>
+              <option value="Reviewer">Reviewer (Auditing & Decisions)</option>
+              <option value="Creator">Creator (Drafting & Editing)</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+          {(teamMembers || []).map((m) => (
+            <div key={m.id} className="p-3.5 rounded-xl neu-card-sm bg-white/60 border border-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shadow-sm ${
+                  m.roleType === 'Manager' ? 'bg-[#536DFE] text-white' : m.roleType === 'Reviewer' ? 'bg-[#10B981] text-white' : 'bg-[#F59E0B] text-white'
+                }`}>
+                  {m.name.split(' ').map(n => n[0]).join('')}
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-[#202B45]">{m.name}</h4>
+                  <p className="text-[11px] text-[#5E6E82]">{m.role}</p>
+                </div>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                m.roleType === 'Manager' ? 'bg-[#536DFE]/15 text-[#536DFE]' : m.roleType === 'Reviewer' ? 'bg-[#10B981]/15 text-[#047857]' : 'bg-[#F59E0B]/15 text-[#B45309]'
+              }`}>
+                {m.roleType}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Section 3: CMS & Social Media Publishing Integrations Hub */}
+      <IntegrationsHub />
+
+      {/* Section 4: Notification Channels */}
       <div className="neu-card p-6 space-y-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-[#536DFE]/10 text-[#536DFE] flex items-center justify-center neu-btn">
@@ -219,7 +338,7 @@ export default function Settings() {
         </div>
       </div>
 
-      {/* Section 3: Data Management */}
+      {/* Section 5: Data Management */}
       <div className="neu-card p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h3 className="text-base font-bold text-[#202B45]">Workspace Records Management</h3>

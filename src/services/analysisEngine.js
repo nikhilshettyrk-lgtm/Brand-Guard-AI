@@ -10,10 +10,14 @@ export async function analyzeContentCompliance({
   contentType,
   guidelines = [],
   uploadedDocuments = [],
-  sensitivityThreshold = 85
+  sensitivityThreshold = 85,
+  imageData = null,
+  colorTokens = [],
+  approvedLogoData = null
 }) {
-  if (!content || !content.trim()) {
-    throw new Error('Content text is empty. Please provide text or an extractable file.');
+  const hasContent = content && content.trim();
+  if (!hasContent && !imageData) {
+    throw new Error('Please provide text or upload an image/document file to analyze.');
   }
 
   // 1. Gather all discrete guidelines and individual extracted document rules
@@ -92,11 +96,23 @@ export async function analyzeContentCompliance({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: content.trim(),
-        title: title ? title.trim() : 'Untitled Submission',
-        contentType: contentType || 'Marketing Copy',
+        content: hasContent ? content.trim() : (imageData ? 'Visual Creative Asset (Multimodal Image Inspection)' : ''),
+        title: title ? title.trim() : (imageData ? 'Visual Creative Asset' : 'Untitled Submission'),
+        contentType: contentType || (imageData ? 'Creative Image' : 'Marketing Copy'),
         guidelines: allDiscreteRules,
-        sensitivityThreshold
+        sensitivityThreshold,
+        imageData: imageData ? {
+          mimeType: imageData.mimeType,
+          base64: imageData.base64
+        } : null,
+        colorTokens: colorTokens || [],
+        approvedLogoData: approvedLogoData ? {
+          name: approvedLogoData.name,
+          variant: approvedLogoData.variant,
+          fileType: approvedLogoData.fileType,
+          mimeType: approvedLogoData.mimeType || 'image/png',
+          base64: approvedLogoData.base64
+        } : null
       })
     });
 
@@ -110,6 +126,7 @@ export async function analyzeContentCompliance({
           findings: data.findings || [],
           violations: data.findings || [], // alias for consistency
           checks: data.checks || [],
+          visualAnalysis: data.visualAnalysis || null,
           modelUsed: data.modelUsed,
           isBackendConnected: true,
           analyzedAt: data.analyzedAt || new Date().toISOString()

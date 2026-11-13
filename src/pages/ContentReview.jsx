@@ -27,7 +27,17 @@ import {
   ShieldCheck,
   UserCheck,
   Clock,
-  Send
+  Send,
+  Palette,
+  Layout,
+  Sliders,
+  Type,
+  Maximize2,
+  Share2,
+  Printer,
+  Download,
+  Users,
+  ExternalLink
 } from 'lucide-react';
 import { useBrandGuard } from '../context/BrandGuardContext';
 import { extractTextFromFile } from '../utils/documentExtractor';
@@ -43,7 +53,15 @@ export default function ContentReview() {
     updateReviewStatus,
     updateReviewWithReanalysis,
     settings,
-    selectedOrganisation
+    selectedOrganisation,
+    colorTokens,
+    teamMembers,
+    assignReview,
+    currentUser,
+    currentUserRole,
+    publishApprovedAsset,
+    primaryOrgLogo,
+    logoAssets
   } = useBrandGuard();
 
   // 1. THREE INPUT TABS: 'text' | 'document' | 'image'
@@ -66,7 +84,7 @@ export default function ContentReview() {
   const [docError, setDocError] = useState('');
   const [isDocDragOver, setIsDocDragOver] = useState(false);
 
-  // Tab C: Upload Images State (PNG, JPG, JPEG)
+  // Tab C: Upload Images State (PNG, JPG, JPEG, WEBP)
   const imageInputRef = useRef(null);
   const [imageTitle, setImageTitle] = useState('');
   const [selectedImage, setSelectedImage] = useState(null);
@@ -76,6 +94,7 @@ export default function ContentReview() {
   const [imageProgress, setImageProgress] = useState('');
   const [imageError, setImageError] = useState('');
   const [isImageDragOver, setIsImageDragOver] = useState(false);
+  const [zoomModalImage, setZoomModalImage] = useState(null);
 
   // Shared Analysis States
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -89,6 +108,15 @@ export default function ContentReview() {
   const [decisionFeedback, setDecisionFeedback] = useState(null);
   const [decisionError, setDecisionError] = useState('');
   const [showApprovalModal, setShowApprovalModal] = useState(false);
+  const [showCertificateModal, setShowCertificateModal] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishPlatform, setPublishPlatform] = useState('Custom Webhooks');
+  const [publishIsSimulation, setPublishIsSimulation] = useState(true);
+  const [publishNotes, setPublishNotes] = useState('');
+  const [publishFeedback, setPublishFeedback] = useState(null);
+  const [wpPostStatus, setWpPostStatus] = useState('draft');
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [assignmentFeedback, setAssignmentFeedback] = useState('');
 
   // Synchronize selected review when reviews change (e.g. organization switch)
   useEffect(() => {
@@ -220,12 +248,12 @@ export default function ContentReview() {
     setImagePreviewUrl(null);
     setExtractedImageText('');
 
-    const allowedExtensions = ['.png', '.jpg', '.jpeg'];
+    const allowedExtensions = ['.png', '.jpg', '.jpeg', '.webp'];
     const fileExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
 
     // File type validation
     if (!allowedExtensions.includes(fileExt)) {
-      setImageError(`Unsupported image format "${fileExt}". Please upload a PNG, JPG, or JPEG image.`);
+      setImageError(`Unsupported image format "${fileExt}". Please upload a PNG, JPG, JPEG, or WEBP image.`);
       return;
     }
 
@@ -244,7 +272,7 @@ export default function ContentReview() {
 
     setSelectedImage(file);
 
-    // Create persistent Data URL preview for image visual analysis and future Gemini integration
+    // Create persistent Data URL preview for image visual analysis and Gemini multimodal integration
     const reader = new FileReader();
     reader.onload = (e) => {
       setImagePreviewUrl(e.target.result);
@@ -257,17 +285,19 @@ export default function ContentReview() {
     }
 
     setIsExtractingImage(true);
-    setImageProgress(`Initializing OCR for ${file.name}...`);
+    setImageProgress(`Scanning visible copy in ${file.name}...`);
 
     try {
       const extraction = await extractTextFromFile(file, (pct, status) => {
         setImageProgress(status);
       });
-      setExtractedImageText(extraction.text);
+      setExtractedImageText(extraction.text || '');
       setImageProgress('');
     } catch (err) {
-      setImageError(err.message || 'Failed to extract text from image using OCR.');
+      // Non-blocking: images with zero text or artistic graphics are still analyzed via Gemini multimodal
+      console.warn('OCR note:', err.message);
       setExtractedImageText('');
+      setImageProgress('');
     } finally {
       setIsExtractingImage(false);
     }
@@ -284,7 +314,7 @@ export default function ContentReview() {
 
   // --- COMMON SUBMISSION WORKFLOW ---
 
-  const executeAnalysis = async ({ title, category, text, submissionMode, originalFile, imagePreview }) => {
+  const executeAnalysis = async ({ title, category, text, submissionMode, originalFile, imagePreview, imageData }) => {
     setAnalysisError('');
     setAnalysisSuccess('');
 
@@ -293,22 +323,34 @@ export default function ContentReview() {
       return;
     }
 
-    if (!text || !text.trim()) {
-      setAnalysisError('No readable text content provided for compliance checking.');
+    if ((!text || !text.trim()) && !imageData) {
+      setAnalysisError('No readable text content or visual image asset provided for compliance checking.');
       return;
     }
 
     setIsAnalyzing(true);
 
     try {
-      // Run compliance analysis against actual saved guidelines
+      // Run compliance analysis against actual saved guidelines and visual palette
+      const approvedLogoPayload = primaryOrgLogo ? {
+        id: primaryOrgLogo.id,
+        name: primaryOrgLogo.name,
+        variant: primaryOrgLogo.variant,
+        fileType: primaryOrgLogo.fileType,
+        mimeType: primaryOrgLogo.mimeType || 'image/png',
+        base64: primaryOrgLogo.pngBase64 || (primaryOrgLogo.previewUrl ? primaryOrgLogo.previewUrl.replace(/^data:[^;]+;base64,/, '') : '')
+      } : null;
+
       const analysisResult = await analyzeContentCompliance({
-        content: text.trim(),
+        content: (text || '').trim(),
         title: title.trim(),
         contentType: category,
         guidelines: manualGuidelines,
         uploadedDocuments: uploadedDocuments,
-        sensitivityThreshold: settings.sensitivity || 85
+        sensitivityThreshold: settings.sensitivity || 85,
+        imageData: imageData || null,
+        colorTokens: colorTokens || [],
+        approvedLogoData: approvedLogoPayload
       });
 
       // Save submission and associate analysis results
@@ -322,8 +364,17 @@ export default function ContentReview() {
           fileType: originalFile.name.substring(originalFile.name.lastIndexOf('.')).toUpperCase().replace('.', ''),
           previewUrl: imagePreview || null
         } : null,
-        extractedText: text.trim(),
+        approvedLogoUsed: primaryOrgLogo ? {
+          id: primaryOrgLogo.id,
+          name: primaryOrgLogo.name,
+          variant: primaryOrgLogo.variant,
+          fileType: primaryOrgLogo.fileType,
+          previewUrl: primaryOrgLogo.previewUrl
+        } : null,
+        extractedText: (text || '').trim(),
         organisationId: selectedOrganisation,
+        submittedBy: currentUser?.name || 'Maya Patel',
+        actorRole: currentUserRole || 'Creator',
         department: category,
         status: analysisResult.status || 'Pending Review',
         score: analysisResult.score !== null ? analysisResult.score : 0,
@@ -331,7 +382,8 @@ export default function ContentReview() {
         checks: analysisResult.checks,
         violations: analysisResult.findings || analysisResult.violations || [],
         findings: analysisResult.findings || analysisResult.violations || [],
-        modelUsed: analysisResult.modelUsed || 'gemini-3.5-flash'
+        modelUsed: analysisResult.modelUsed || 'gemini-3.5-flash',
+        visualAnalysis: analysisResult.visualAnalysis || null
       });
 
       setSelectedReviewId(newSubmission.id);
@@ -398,25 +450,34 @@ export default function ContentReview() {
   const handleImageSubmit = (e) => {
     e.preventDefault();
     if (!selectedImage) {
-      setImageError('Please upload a PNG, JPG, or JPEG image first.');
+      setImageError('Please upload a PNG, JPG, JPEG, or WEBP image first.');
       return;
     }
     if (isExtractingImage) {
       setAnalysisError('Please wait for image OCR extraction to complete.');
       return;
     }
-    if (!extractedImageText.trim()) {
-      setImageError('Cannot analyze: No readable text extracted from image.');
-      return;
+
+    // Determine MIME type
+    let mimeType = selectedImage.type;
+    if (!mimeType) {
+      const ext = selectedImage.name.substring(selectedImage.name.lastIndexOf('.')).toLowerCase();
+      if (ext === '.png') mimeType = 'image/png';
+      else if (ext === '.webp') mimeType = 'image/webp';
+      else mimeType = 'image/jpeg';
     }
+
+    const cleanBase64 = imagePreviewUrl ? imagePreviewUrl.replace(/^data:[^;]+;base64,/, '') : null;
+    const imageData = cleanBase64 ? { mimeType, base64: cleanBase64 } : null;
 
     executeAnalysis({
       title: imageTitle || selectedImage.name,
       category: contentCategory,
-      text: extractedImageText,
+      text: extractedImageText || `[Visual Creative Asset: ${selectedImage.name}]`,
       submissionMode: 'image',
       originalFile: selectedImage,
-      imagePreview: imagePreviewUrl
+      imagePreview: imagePreviewUrl,
+      imageData: imageData
     });
   };
 
@@ -530,7 +591,7 @@ export default function ContentReview() {
   };
 
   const handleReanalyze = async () => {
-    if (!editableContent.trim()) {
+    if (!editableContent.trim() && !activeReview?.originalFile?.previewUrl) {
       setReanalysisError('Cannot re-analyse empty content.');
       return;
     }
@@ -539,18 +600,29 @@ export default function ContentReview() {
     setReanalysisSuccess('');
 
     try {
+      let imageData = null;
+      if (activeReview?.submissionMode === 'image' && activeReview.originalFile?.previewUrl) {
+        const previewUrl = activeReview.originalFile.previewUrl;
+        const mimeMatch = previewUrl.match(/^data:([^;]+);base64,/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        const cleanBase64 = previewUrl.replace(/^data:[^;]+;base64,/, '');
+        imageData = { mimeType, base64: cleanBase64 };
+      }
+
       const analysisResult = await analyzeContentCompliance({
-        content: editableContent.trim(),
+        content: (editableContent || '').trim(),
         title: activeReview.title,
         contentType: activeReview.contentType,
         guidelines: manualGuidelines,
         uploadedDocuments: uploadedDocuments,
-        sensitivityThreshold: settings.sensitivity || 85
+        sensitivityThreshold: settings.sensitivity || 85,
+        imageData: imageData,
+        colorTokens: colorTokens || []
       });
 
       const nextVer = (activeReview.versions?.length || 1) + 1;
       updateReviewWithReanalysis(activeReview.id, {
-        content: editableContent.trim(),
+        content: (editableContent || '').trim(),
         score: analysisResult.score !== null ? analysisResult.score : 0,
         status: analysisResult.status || 'Pending Review', // Never automatically approved!
         summary: analysisResult.summary,
@@ -559,6 +631,7 @@ export default function ContentReview() {
         checks: analysisResult.checks || [],
         modelUsed: analysisResult.modelUsed || 'gemini-3.5-flash',
         organisationId: activeReview.organisationId || selectedOrganisation,
+        visualAnalysis: analysisResult.visualAnalysis || activeReview.visualAnalysis || null,
         note: `Re-analysis (v${nextVer})`
       });
 
@@ -590,11 +663,16 @@ export default function ContentReview() {
 
   const handleConfirmApprove = () => {
     if (!selectedReviewId) return;
+    if (currentUserRole === 'Creator') {
+      setDecisionError('Access Denied: Creator role cannot approve submissions.');
+      return;
+    }
     updateReviewStatus(
       selectedReviewId,
       'Approved',
       reviewerNotes.trim() || 'Approved after human compliance review.',
-      reviewerIdentity.trim() || 'Workspace Administrator'
+      reviewerIdentity.trim() || currentUser?.name || 'Workspace Administrator',
+      currentUserRole
     );
     setShowApprovalModal(false);
     setDecisionFeedback('Asset marked as: Approved');
@@ -603,6 +681,10 @@ export default function ContentReview() {
 
   const handleRequestRevisions = () => {
     setDecisionError('');
+    if (currentUserRole === 'Creator') {
+      setDecisionError('Access Denied: Creator role cannot request revisions.');
+      return;
+    }
     if (!reviewerNotes.trim()) {
       setDecisionError('Review comments are strictly required when requesting revisions to specify what changes the creator must make.');
       return;
@@ -611,7 +693,8 @@ export default function ContentReview() {
       selectedReviewId,
       'Changes Requested',
       reviewerNotes.trim(),
-      reviewerIdentity.trim() || 'Workspace Administrator'
+      reviewerIdentity.trim() || currentUser?.name || 'Workspace Administrator',
+      currentUserRole
     );
     setDecisionFeedback('Asset returned to creator: Changes Requested');
     setTimeout(() => setDecisionFeedback(null), 3000);
@@ -619,6 +702,10 @@ export default function ContentReview() {
 
   const handleReject = () => {
     setDecisionError('');
+    if (currentUserRole === 'Creator') {
+      setDecisionError('Access Denied: Creator role cannot reject submissions.');
+      return;
+    }
     if (!reviewerNotes.trim()) {
       setDecisionError('Review comments are strictly required when rejecting content to explain the policy or brand conflict.');
       return;
@@ -627,10 +714,75 @@ export default function ContentReview() {
       selectedReviewId,
       'Rejected',
       reviewerNotes.trim(),
-      reviewerIdentity.trim() || 'Workspace Administrator'
+      reviewerIdentity.trim() || currentUser?.name || 'Workspace Administrator',
+      currentUserRole
     );
     setDecisionFeedback('Asset marked as: Rejected');
     setTimeout(() => setDecisionFeedback(null), 3000);
+  };
+
+  const handleAssignReviewer = (assignee) => {
+    if (!activeReview || !assignee) return;
+    if (currentUserRole !== 'Manager') {
+      setAssignmentFeedback('Access Denied: Only Managers can assign review ownership.');
+      setTimeout(() => setAssignmentFeedback(''), 3000);
+      return;
+    }
+    assignReview(activeReview.id, assignee, currentUser?.name);
+    setAssignmentFeedback(`Assigned ownership to ${assignee}`);
+    setTimeout(() => setAssignmentFeedback(''), 3000);
+  };
+
+  const handlePublishAsset = async () => {
+    if (!activeReview) return;
+    if (currentUserRole !== 'Manager') {
+      setPublishFeedback({
+        error: true,
+        message: 'Access Denied: Only authorized Managers can dispatch and publish collateral.'
+      });
+      return;
+    }
+    if (!activeReview.productionClearance) {
+      setPublishFeedback({
+        error: true,
+        message: 'Production Clearance Required: Content must receive final Manager clearance before external dispatch.'
+      });
+      return;
+    }
+
+    setIsPublishing(true);
+    setPublishFeedback(null);
+    try {
+      const res = await publishApprovedAsset(activeReview.id, publishPlatform, {
+        isSimulation: publishIsSimulation,
+        notes: publishNotes.trim(),
+        postStatus: wpPostStatus
+      });
+
+      if (res && res.success) {
+        setPublishFeedback({
+          error: false,
+          message: res.message + (res.post?.url ? ` Link: ${res.post.url}` : '')
+        });
+        setTimeout(() => {
+          setPublishFeedback(null);
+          setShowPublishModal(false);
+          setPublishNotes('');
+        }, 3000);
+      } else {
+        setPublishFeedback({
+          error: true,
+          message: res?.message || 'Publishing failed. Live connection unavailable or authentication required.'
+        });
+      }
+    } catch (err) {
+      setPublishFeedback({
+        error: true,
+        message: err.message || 'Publishing error.'
+      });
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   // Governance Audit Trail computation
@@ -679,7 +831,7 @@ export default function ContentReview() {
         type="file"
         ref={imageInputRef}
         onChange={(e) => handleImageFile(e.target.files?.[0])}
-        accept=".png,.jpg,.jpeg"
+        accept=".png,.jpg,.jpeg,.webp"
         className="hidden"
       />
 
@@ -1044,7 +1196,7 @@ export default function ContentReview() {
         )}
 
         {/* ============================================================== */}
-        {/* OPTION C: UPLOAD IMAGES (PNG, JPG, JPEG)                        */}
+        {/* OPTION C: UPLOAD IMAGES (PNG, JPG, JPEG, WEBP)                  */}
         {/* ============================================================== */}
         {activeTab === 'image' && (
           <form onSubmit={handleImageSubmit} className="space-y-5 animate-in fade-in duration-150">
@@ -1064,7 +1216,7 @@ export default function ContentReview() {
             {/* Image Drag-and-Drop Area */}
             <div>
               <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block mb-1">
-                Upload Image Asset (PNG, JPG, JPEG) *
+                Upload an image, poster, advertisement or social media creative. *
               </label>
 
               <div
@@ -1088,19 +1240,27 @@ export default function ContentReview() {
                   <div className="space-y-4">
                     {/* VISUAL IMAGE PREVIEW */}
                     {imagePreviewUrl && (
-                      <div className="max-w-xs mx-auto rounded-2xl overflow-hidden neu-card-sm border border-white p-2 bg-white/60">
+                      <div className="relative max-w-sm mx-auto rounded-2xl overflow-hidden neu-card-sm border border-white p-2 bg-white/70 group">
                         <img
                           src={imagePreviewUrl}
                           alt="Uploaded asset preview"
-                          className="max-h-48 w-full object-contain rounded-xl"
+                          className="max-h-56 w-full object-contain rounded-xl"
                         />
+                        <button
+                          type="button"
+                          onClick={() => setZoomModalImage(imagePreviewUrl)}
+                          className="absolute bottom-4 right-4 p-2 rounded-xl bg-black/60 hover:bg-black/80 text-white shadow-md backdrop-blur-sm transition-all"
+                          title="Zoom image preview"
+                        >
+                          <Maximize2 className="w-4 h-4" />
+                        </button>
                       </div>
                     )}
 
                     <div>
                       <h4 className="text-sm md:text-base font-bold text-[#202B45]">{selectedImage.name}</h4>
                       <p className="text-xs text-[#8A99AD] mt-0.5">
-                        {formatFileSize(selectedImage.size)} • {selectedImage.name.substring(selectedImage.name.lastIndexOf('.')).toUpperCase().replace('.', '')} Image
+                        {formatFileSize(selectedImage.size)} • {selectedImage.name.substring(selectedImage.name.lastIndexOf('.')).toUpperCase().replace('.', '')} Creative Image
                       </p>
                     </div>
 
@@ -1108,7 +1268,7 @@ export default function ContentReview() {
                     {isExtractingImage && (
                       <div className="p-2.5 bg-white/70 rounded-xl neu-card-sm inline-flex items-center gap-2 text-xs font-semibold text-[#536DFE]">
                         <Loader2 className="w-4 h-4 animate-spin text-[#536DFE]" />
-                        <span>{imageProgress || 'Reading visible text via OCR...'}</span>
+                        <span>{imageProgress || 'Scanning visible text in creative asset...'}</span>
                       </div>
                     )}
 
@@ -1132,25 +1292,28 @@ export default function ContentReview() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2.5">
-                    <div className="w-12 h-12 mx-auto rounded-2xl bg-white/70 neu-card-sm flex items-center justify-center text-[#536DFE]">
-                      <ImageIcon className="w-6 h-6" />
+                  <div className="space-y-3 py-2">
+                    <div className="w-14 h-14 mx-auto rounded-2xl bg-white/70 neu-card-sm flex items-center justify-center text-[#536DFE]">
+                      <ImageIcon className="w-7 h-7" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-[#202B45]">
-                        Drag and drop your image file here, or browse
+                      <h4 className="text-sm md:text-base font-bold text-[#202B45]">
+                        Upload an image, poster, advertisement or social media creative.
                       </h4>
+                      <p className="text-xs text-[#5E6E82] mt-1">
+                        Drag and drop creative assets here, or browse from your device
+                      </p>
                       <p className="text-xs text-[#8A99AD] mt-0.5">
-                        Supported formats: <strong>PNG, JPG, JPEG</strong> (max 20MB)
+                        Supported formats: <strong>PNG, JPG, JPEG, WEBP</strong> (up to 20MB)
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => imageInputRef.current?.click()}
-                      className="neu-btn px-4 py-2 text-xs font-bold text-[#202B45] hover:text-[#536DFE] inline-flex items-center gap-1.5"
+                      className="neu-btn px-5 py-2.5 text-xs font-bold text-[#202B45] hover:text-[#536DFE] inline-flex items-center gap-2 mt-1"
                     >
                       <UploadCloud className="w-4 h-4 text-[#536DFE]" />
-                      Browse Images
+                      Select Image File
                     </button>
                   </div>
                 )}
@@ -1165,29 +1328,42 @@ export default function ContentReview() {
               )}
             </div>
 
-            {/* CONTENT PREVIEW & EDITABLE OCR EXTRACTED TEXT */}
-            {selectedImage && !isExtractingImage && extractedImageText && (
+            {/* CONTENT PREVIEW & EDITABLE OCR EXTRACTED TEXT (IF ANY DETECTED) */}
+            {selectedImage && !isExtractingImage && (
               <div className="space-y-2 animate-in fade-in duration-200">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider flex items-center gap-1.5">
                     <CheckCircle2 className="w-3.5 h-3.5 text-[#10B981]" />
-                    OCR Transcribed Content ({extractedImageText.trim().split(/\s+/).length} words detected)
+                    {extractedImageText
+                      ? `OCR Detected Text (${extractedImageText.trim().split(/\s+/).length} words)`
+                      : 'Multimodal Image Understanding Active'}
                   </span>
-                  <span className="text-[10px] text-[#536DFE] font-semibold flex items-center gap-1">
-                    <Edit3 className="w-3 h-3" />
-                    Editable before submission
-                  </span>
+                  {extractedImageText && (
+                    <span className="text-[10px] text-[#536DFE] font-semibold flex items-center gap-1">
+                      <Edit3 className="w-3 h-3" />
+                      Editable before submission
+                    </span>
+                  )}
                 </div>
 
-                <textarea
-                  rows={6}
-                  value={extractedImageText}
-                  onChange={(e) => setExtractedImageText(e.target.value)}
-                  className="neu-input w-full p-4 text-xs md:text-sm font-normal leading-relaxed text-[#202B45] resize-y"
-                  placeholder="OCR extracted text..."
-                />
+                {extractedImageText ? (
+                  <textarea
+                    rows={5}
+                    value={extractedImageText}
+                    onChange={(e) => setExtractedImageText(e.target.value)}
+                    className="neu-input w-full p-4 text-xs md:text-sm font-normal leading-relaxed text-[#202B45] resize-y"
+                    placeholder="OCR extracted text..."
+                  />
+                ) : (
+                  <div className="p-3.5 rounded-xl bg-white/50 border border-white/80 text-xs text-[#5E6E82] flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#536DFE] flex-shrink-0" />
+                    <span>
+                      Pure creative image detected. Gemini will evaluate brand colors, logo placement, visual typography, and layout balance directly from the image pixels.
+                    </span>
+                  </div>
+                )}
                 <p className="text-[10px] text-[#8A99AD]">
-                  Original image asset is preserved for visual inspection and multimodal brand checks. Edit the text above if needed.
+                  Original image data is transmitted to Gemini multimodal models alongside organisation brand guidelines.
                 </p>
               </div>
             )}
@@ -1195,20 +1371,20 @@ export default function ContentReview() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-[#D5DDE7]/70">
               <span className="text-xs text-[#8A99AD] flex items-center gap-1.5">
                 <Info className="w-3.5 h-3.5" />
-                Image pixels are read via browser-based OCR; image file is preserved for analysis.
+                Gemini 3.5 Flash evaluates visual aesthetics, color palettes, logo safety, and typography.
               </span>
 
               <button
                 type="submit"
-                disabled={isAnalyzing || isExtractingImage || !selectedImage || !extractedImageText.trim()}
+                disabled={isAnalyzing || isExtractingImage || !selectedImage}
                 className={`neu-btn-primary px-6 py-2.5 text-xs md:text-sm font-bold flex items-center justify-center gap-2 shadow-sm self-end sm:self-auto ${
-                  (!selectedImage || !extractedImageText.trim() || isExtractingImage) ? 'opacity-60 cursor-not-allowed' : ''
+                  (!selectedImage || isExtractingImage) ? 'opacity-60 cursor-not-allowed' : ''
                 }`}
               >
                 {isAnalyzing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Analyzing Image...
+                    Analyzing Visual Asset...
                   </>
                 ) : (
                   <>
@@ -1283,20 +1459,26 @@ export default function ContentReview() {
                 {/* Left Col: Submission Details, Preview & Text (7 cols) */}
                 <div className="lg:col-span-7 space-y-5">
                   <div className="neu-card p-6">
-                    <div className="flex items-start justify-between gap-3 mb-4">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4 pb-3 border-b border-[#D5DDE7]/70">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="text-base font-bold text-[#202B45]">
                             {activeReview.title}
                           </h4>
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-white/80 text-[#5E6E82] border border-[#D1D9E6]">
                             {activeReview.contentType}
                           </span>
+                          {activeReview.assignedTo && (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#536DFE]/15 text-[#536DFE] flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              Assigned: {activeReview.assignedTo}
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-[#8A99AD] mt-1">
                           Mode: {
                             activeReview.submissionMode === 'image'
-                              ? 'Image Upload (OCR)'
+                              ? 'Image Upload (Multimodal & OCR)'
                               : activeReview.submissionMode === 'document'
                               ? 'Document Ingestion'
                               : 'Direct Text Copy'
@@ -1304,46 +1486,422 @@ export default function ContentReview() {
                         </p>
                       </div>
 
-                      <span
-                        className={`text-xs font-bold px-3 py-1 rounded-full ${
-                          activeReview.status === 'Approved'
-                            ? 'bg-[#10B981]/15 text-[#047857]'
-                            : activeReview.status === 'Changes Requested'
-                            ? 'bg-[#F59E0B]/15 text-[#B45309]'
-                            : activeReview.status === 'Rejected' || activeReview.status === 'Flagged'
-                            ? 'bg-[#EF4444]/15 text-[#B91C1C]'
-                            : 'bg-[#536DFE]/15 text-[#536DFE]'
-                        }`}
-                      >
-                        {activeReview.status}
-                      </span>
+                      <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => setShowCertificateModal(true)}
+                          className="neu-btn px-3 py-1.5 text-xs font-bold text-[#536DFE] hover:text-[#4258E8] flex items-center gap-1.5"
+                          title="Generate printable Multimodal Compliance Certificate & Audit"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          Certificate & Audit PDF
+                        </button>
+
+                        {/* Publish to CMS / Integrations Hub */}
+                        {activeReview.status === 'Approved' && (
+                          currentUserRole === 'Manager' ? (
+                            activeReview.productionClearance ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowPublishModal(true);
+                                  setPublishIsSimulation(true);
+                                  setPublishFeedback(null);
+                                  setPublishNotes('');
+                                }}
+                                className="neu-btn px-3 py-1.5 text-xs font-bold text-[#10B981] hover:text-[#059669] flex items-center gap-1.5 shadow-xs"
+                                title="Publish production-cleared collateral via Integrations Hub"
+                              >
+                                <Share2 className="w-3.5 h-3.5" />
+                                Publish
+                              </button>
+                            ) : (
+                              <span
+                                className="text-[10px] font-bold text-[#8A99AD] bg-white/50 border border-white px-2 py-1 rounded-xl flex items-center gap-1"
+                                title="Production clearance required before publishing can be unlocked"
+                              >
+                                <ShieldCheck className="w-3 h-3 text-[#F59E0B]" />
+                                Clearance Req.
+                              </span>
+                            )
+                          ) : (
+                            <span
+                              className="text-[10px] font-bold text-[#8A99AD] bg-white/50 border border-white px-2 py-1 rounded-xl"
+                              title="Manager credentials required for publishing"
+                            >
+                              Manager Publishing Only
+                            </span>
+                          )
+                        )}
+
+                        <span
+                          className={`text-xs font-bold px-3 py-1 rounded-full ${
+                            activeReview.status === 'Approved'
+                              ? 'bg-[#10B981]/15 text-[#047857]'
+                              : activeReview.status === 'Changes Requested'
+                              ? 'bg-[#F59E0B]/15 text-[#B45309]'
+                              : activeReview.status === 'Rejected' || activeReview.status === 'Flagged'
+                              ? 'bg-[#EF4444]/15 text-[#B91C1C]'
+                              : 'bg-[#536DFE]/15 text-[#536DFE]'
+                          }`}
+                        >
+                          {activeReview.status}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Original Visual Image Preview if Image Mode */}
-                    {activeReview.originalFile?.previewUrl && (
-                      <div className="mb-4 p-3 rounded-2xl bg-white/60 neu-card-sm border border-white flex items-center justify-center">
-                        <img
-                          src={activeReview.originalFile.previewUrl}
-                          alt="Asset visual thumbnail"
-                          className="max-h-48 object-contain rounded-xl"
-                        />
+                    {/* ASSIGNMENT CONTROL BAR */}
+                    <div className="mb-4 p-3 rounded-xl bg-white/50 border border-white/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2">
+                        <Users className="w-4 h-4 text-[#536DFE]" />
+                        <span className="font-bold text-[#202B45]">Content Ownership Assignment:</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {currentUserRole === 'Manager' ? (
+                          <select
+                            value={activeReview.assignedTo || ''}
+                            onChange={(e) => handleAssignReviewer(e.target.value)}
+                            className="neu-input px-3 py-1.5 text-xs font-bold text-[#202B45] cursor-pointer"
+                            title="Assign or reassign review ownership (Manager capability)"
+                          >
+                            <option value="">Unassigned (Open Queue)</option>
+                            {(teamMembers || []).map(m => (
+                              <option key={m.id} value={m.name}>
+                                {m.name} ({m.roleType})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="neu-card-sm px-3 py-1.5 rounded-xl text-xs font-bold text-[#202B45] bg-white/80 border border-white flex items-center gap-1.5">
+                            {activeReview.assignedTo ? `Assigned to: ${activeReview.assignedTo}` : 'Unassigned (Open Queue)'}
+                            <span className="text-[10px] text-[#8A99AD] font-normal ml-1">
+                              (Manager role required to assign)
+                            </span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {assignmentFeedback && (
+                      <div className="mb-4 p-2.5 rounded-xl bg-[#10B981]/15 border border-[#10B981]/30 text-[#065F46] text-xs font-bold flex items-center gap-2 animate-in fade-in">
+                        <CheckCircle2 className="w-4 h-4 text-[#10B981]" />
+                        <span>{assignmentFeedback}</span>
                       </div>
                     )}
 
-                    {/* Original File Metadata info if file was uploaded */}
-                    {activeReview.originalFile && (
-                      <div className="mb-4 p-3 rounded-xl bg-white/50 border border-white/80 flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
-                          {activeReview.submissionMode === 'image' ? (
-                            <ImageIcon className="w-4 h-4 text-[#536DFE]" />
-                          ) : (
-                            <FileText className="w-4 h-4 text-[#536DFE]" />
+                    {/* VISUAL COMPLIANCE & BRAND CREATIVE ANALYSIS CARD */}
+                    {(activeReview.submissionMode === 'image' || activeReview.visualAnalysis || activeReview.originalFile?.previewUrl) && (
+                      <div className="mb-5 p-5 rounded-2xl bg-white/70 neu-card-sm border border-white/90 space-y-4">
+                        {/* Header: Visual Preview & Visual Score */}
+                        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-3 border-b border-[#D5DDE7]/70">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-[#536DFE]/10 text-[#536DFE] flex items-center justify-center neu-card-sm">
+                              <Palette className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <h4 className="text-sm md:text-base font-bold text-[#202B45] flex items-center gap-2">
+                                Visual Compliance & Brand Creative Audit
+                              </h4>
+                              <p className="text-xs text-[#5E6E82]">
+                                Multimodal inspection: Brand palette, logo safe-zones, typography & layout
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Visual Score Badge */}
+                          {activeReview.visualAnalysis?.visualScore !== undefined && activeReview.visualAnalysis?.visualScore !== null && (
+                            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white neu-card-sm border border-white">
+                              <span className="text-xs font-bold text-[#5E6E82]">Visual Score:</span>
+                              <span
+                                className={`text-base font-extrabold ${
+                                  activeReview.visualAnalysis.visualScore >= 85
+                                    ? 'text-[#10B981]'
+                                    : activeReview.visualAnalysis.visualScore >= 70
+                                    ? 'text-[#F59E0B]'
+                                    : 'text-[#EF4444]'
+                                }`}
+                              >
+                                {activeReview.visualAnalysis.visualScore}%
+                              </span>
+                            </div>
                           )}
-                          <span className="font-bold text-[#202B45]">{activeReview.originalFile.name}</span>
                         </div>
-                        <span className="text-[#8A99AD] font-mono">
-                          {activeReview.originalFile.fileType} • {activeReview.originalFile.size}
-                        </span>
+
+                        {/* Approved Master Reference Logo Banner */}
+                        {activeReview.approvedLogoUsed && (
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-xl bg-white/80 neu-card-sm border border-white text-xs">
+                            <div className="flex items-center gap-2.5">
+                              {activeReview.approvedLogoUsed.previewUrl && (
+                                <div className="w-14 h-9 rounded-lg bg-white border border-[#D5DDE7] p-1 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                  <img
+                                    src={activeReview.approvedLogoUsed.previewUrl}
+                                    alt="Master Logo Reference"
+                                    className="max-h-full max-w-full object-contain"
+                                  />
+                                </div>
+                              )}
+                              <div>
+                                <span className="font-bold text-[#202B45] flex items-center gap-1.5">
+                                  <ShieldCheck className="w-3.5 h-3.5 text-[#10B981]" />
+                                  Master Logo Reference: {activeReview.approvedLogoUsed.name}
+                                </span>
+                                <span className="text-[10px] text-[#5E6E82]">
+                                  Official {activeReview.approvedLogoUsed.variant || 'Master'} Asset ({activeReview.approvedLogoUsed.fileType})
+                                </span>
+                              </div>
+                            </div>
+                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full self-start sm:self-auto ${
+                              activeReview.visualAnalysis?.logoAssessment?.distortionDetected || activeReview.visualAnalysis?.logoAssessment?.colorVariationDetected
+                                ? 'bg-[#EF4444]/15 text-[#B91C1C]'
+                                : 'bg-[#10B981]/15 text-[#047857]'
+                            }`}>
+                              {activeReview.visualAnalysis?.logoAssessment?.referenceStatus || 'Verified Against Master'}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Image Preview & File Meta */}
+                        {activeReview.originalFile?.previewUrl && (
+                          <div className="relative rounded-2xl overflow-hidden bg-[#202B45]/5 border border-[#D5DDE7]/80 p-2 flex items-center justify-center group">
+                            <img
+                              src={activeReview.originalFile.previewUrl}
+                              alt={activeReview.title || 'Creative Preview'}
+                              className="max-h-64 max-w-full object-contain rounded-xl"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setZoomModalImage(activeReview.originalFile.previewUrl)}
+                              className="absolute bottom-3 right-3 p-2 rounded-xl bg-black/60 hover:bg-black/80 text-white shadow-md backdrop-blur-sm transition-all flex items-center gap-1.5 text-xs font-semibold"
+                            >
+                              <Maximize2 className="w-3.5 h-3.5" />
+                              Inspect High-Res
+                            </button>
+                          </div>
+                        )}
+
+                        {activeReview.originalFile && (
+                          <div className="flex items-center justify-between text-xs px-2 text-[#5E6E82]">
+                            <span className="font-semibold text-[#202B45]">
+                              {activeReview.originalFile.name}
+                            </span>
+                            <span className="font-mono text-[#8A99AD]">
+                              {activeReview.originalFile.fileType} • {activeReview.originalFile.size}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* DETECTED COLOURS AND HEX CODES */}
+                        {activeReview.visualAnalysis?.detectedColors && activeReview.visualAnalysis.detectedColors.length > 0 && (
+                          <div className="space-y-2 pt-2">
+                            <span className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block">
+                              Detected Asset Colours & HEX Codes
+                            </span>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                              {activeReview.visualAnalysis.detectedColors.map((col, idx) => (
+                                <div
+                                  key={idx}
+                                  className="p-2 rounded-xl bg-white/80 neu-card-sm border border-white flex items-center gap-2.5"
+                                >
+                                  <div
+                                    className="w-7 h-7 rounded-lg border border-black/10 shadow-inner flex-shrink-0"
+                                    style={{ backgroundColor: col.hex }}
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-xs font-mono font-bold text-[#202B45] uppercase truncate">
+                                      {col.hex}
+                                    </div>
+                                    <div className="text-[10px] text-[#8A99AD] truncate">
+                                      {col.name || 'Swatch'}
+                                    </div>
+                                    <span
+                                      className={`inline-block text-[9px] font-bold px-1.5 py-0.2 rounded mt-0.5 ${
+                                        col.isBrandApproved
+                                          ? 'bg-[#10B981]/15 text-[#047857]'
+                                          : 'bg-[#EF4444]/15 text-[#B91C1C]'
+                                      }`}
+                                    >
+                                      {col.isBrandApproved ? 'Approved Brand' : 'Unapproved'}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* BRAND PALETTE COMPARISON */}
+                        {activeReview.visualAnalysis?.brandPaletteComparison && (
+                          <div className="p-3.5 rounded-xl bg-white/60 neu-card-sm border border-white space-y-2 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-[#202B45] flex items-center gap-1.5">
+                                <Palette className="w-3.5 h-3.5 text-[#536DFE]" />
+                                Brand Palette Comparison ({activeReview.organisationId || selectedOrganisation})
+                              </span>
+                            </div>
+
+                            {activeReview.visualAnalysis.brandPaletteComparison.summary && (
+                              <p className="text-[#5E6E82] leading-relaxed">
+                                {activeReview.visualAnalysis.brandPaletteComparison.summary}
+                              </p>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-2 pt-1">
+                              <span className="text-[10px] font-bold uppercase text-[#047857]">Matched:</span>
+                              {(activeReview.visualAnalysis.brandPaletteComparison.matchedBrandColors || []).length > 0 ? (
+                                activeReview.visualAnalysis.brandPaletteComparison.matchedBrandColors.map((hex, i) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-0.5 rounded-md font-mono text-[10px] font-bold bg-[#10B981]/15 text-[#047857] flex items-center gap-1"
+                                  >
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: hex }} />
+                                    {hex}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[10px] text-[#8A99AD] italic">None matched</span>
+                              )}
+
+                              <span className="text-[10px] font-bold uppercase text-[#B91C1C] ml-2">Unapproved:</span>
+                              {(activeReview.visualAnalysis.brandPaletteComparison.unapprovedColorsDetected || []).length > 0 ? (
+                                activeReview.visualAnalysis.brandPaletteComparison.unapprovedColorsDetected.map((hex, i) => (
+                                  <span
+                                    key={i}
+                                    className="px-2 py-0.5 rounded-md font-mono text-[10px] font-bold bg-[#EF4444]/15 text-[#B91C1C] flex items-center gap-1"
+                                  >
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: hex }} />
+                                    {hex}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[10px] text-[#8A99AD] italic">None detected</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* VISUAL COMPLIANCE FINDINGS (LOGO, TYPOGRAPHY, LAYOUT) */}
+                        {activeReview.visualAnalysis && (
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                            {/* Logo Assessment & Master Comparative Verification */}
+                            <div className="p-3.5 rounded-xl bg-white/60 neu-card-sm border border-white space-y-2 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-[#202B45] flex items-center gap-1.5">
+                                  <ShieldCheck className="w-3.5 h-3.5 text-[#536DFE]" />
+                                  Logo Master Verification
+                                </span>
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                    activeReview.visualAnalysis.logoAssessment?.referenceStatus === 'Unverified (No Master Asset)'
+                                      ? 'bg-gray-100 text-[#5E6E82]'
+                                      : activeReview.visualAnalysis.logoAssessment?.isCompliant && !activeReview.visualAnalysis.logoAssessment?.distortionDetected && !activeReview.visualAnalysis.logoAssessment?.colorVariationDetected
+                                      ? 'bg-[#10B981]/15 text-[#047857]'
+                                      : 'bg-[#EF4444]/15 text-[#B91C1C]'
+                                  }`}
+                                >
+                                  {activeReview.visualAnalysis.logoAssessment?.referenceStatus || (activeReview.visualAnalysis.logoAssessment?.isCompliant ? 'Verified Match' : 'Discrepancy')}
+                                </span>
+                              </div>
+
+                              <div className="space-y-1 text-[11px] text-[#5E6E82]">
+                                <p>
+                                  <strong>Reference:</strong> {activeReview.visualAnalysis.approvedLogoName || activeReview.approvedLogoUsed?.name || 'Approved Master Asset'}
+                                </p>
+                                <p>
+                                  <strong>Aspect & Scaling:</strong> {
+                                    activeReview.visualAnalysis.logoAssessment?.distortionDetected
+                                      ? <span className="text-[#B91C1C] font-bold">Distortion Detected (Altered Proportions)</span>
+                                      : <span className="text-[#047857] font-semibold">Proportions Preserved</span>
+                                  }
+                                </p>
+                                <p>
+                                  <strong>Color Fidelity:</strong> {
+                                    activeReview.visualAnalysis.logoAssessment?.colorVariationDetected
+                                      ? <span className="text-[#B91C1C] font-bold">Unauthorized Color Shift</span>
+                                      : <span className="text-[#047857] font-semibold">Approved Palette Match</span>
+                                  }
+                                </p>
+                                <p>
+                                  <strong>Clear Margin:</strong> {activeReview.visualAnalysis.logoAssessment?.clearSpaceCompliance || 'Standard safe-margin applied'}
+                                </p>
+                              </div>
+
+                              {activeReview.visualAnalysis.logoAssessment?.findings && (
+                                <p className="text-[10px] text-[#8A99AD] italic pt-1 border-t border-[#D5DDE7]/50 leading-relaxed">
+                                  "{activeReview.visualAnalysis.logoAssessment.findings}"
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Typography Assessment */}
+                            <div className="p-3 rounded-xl bg-white/60 neu-card-sm border border-white space-y-1.5 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-[#202B45] flex items-center gap-1.5">
+                                  <Type className="w-3.5 h-3.5 text-[#536DFE]" />
+                                  Typography & Contrast
+                                </span>
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                    activeReview.visualAnalysis.typographyAssessment?.contrastCompliance
+                                      ? 'bg-[#10B981]/15 text-[#047857]'
+                                      : 'bg-[#EF4444]/15 text-[#B91C1C]'
+                                  }`}
+                                >
+                                  {activeReview.visualAnalysis.typographyAssessment?.contrastCompliance ? 'WCAG Pass' : 'Low Contrast'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[#5E6E82]">
+                                <strong>Hierarchy:</strong> {activeReview.visualAnalysis.typographyAssessment?.hierarchyRating || 'Standard'}
+                              </p>
+                              <p className="text-[11px] text-[#5E6E82]">
+                                <strong>Fonts:</strong> {(activeReview.visualAnalysis.typographyAssessment?.fontsDetected || ['Sans-serif']).join(', ')}
+                              </p>
+                              {activeReview.visualAnalysis.typographyAssessment?.findings && (
+                                <p className="text-[10px] text-[#8A99AD] italic pt-1 border-t border-[#D5DDE7]/50">
+                                  {activeReview.visualAnalysis.typographyAssessment.findings}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Layout Assessment */}
+                            <div className="p-3 rounded-xl bg-white/60 neu-card-sm border border-white space-y-1.5 text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-[#202B45] flex items-center gap-1.5">
+                                  <Layout className="w-3.5 h-3.5 text-[#536DFE]" />
+                                  Layout Balance
+                                </span>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#536DFE]/15 text-[#536DFE]">
+                                  {activeReview.visualAnalysis.layoutAssessment?.spacingBalance ? 'Analyzed' : 'Standard'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[#5E6E82]">
+                                <strong>Spacing:</strong> {activeReview.visualAnalysis.layoutAssessment?.spacingBalance || 'Balanced grid'}
+                              </p>
+                              <p className="text-[11px] text-[#5E6E82]">
+                                <strong>Consistency:</strong> {activeReview.visualAnalysis.layoutAssessment?.visualConsistency || 'Consistent brand look'}
+                              </p>
+                              {activeReview.visualAnalysis.layoutAssessment?.findings && (
+                                <p className="text-[10px] text-[#8A99AD] italic pt-1 border-t border-[#D5DDE7]/50">
+                                  {activeReview.visualAnalysis.layoutAssessment.findings}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* RECOMMENDED IMPROVEMENTS */}
+                        {activeReview.visualAnalysis?.recommendedImprovements && activeReview.visualAnalysis.recommendedImprovements.length > 0 && (
+                          <div className="p-3.5 rounded-xl bg-[#536DFE]/5 border border-[#536DFE]/20 space-y-1.5 text-xs">
+                            <span className="font-bold text-[#202B45] flex items-center gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-[#536DFE]" />
+                              Recommended Visual & Creative Improvements
+                            </span>
+                            <ul className="space-y-1 list-disc list-inside text-[#5E6E82] text-[11px]">
+                              {activeReview.visualAnalysis.recommendedImprovements.map((rec, i) => (
+                                <li key={i}>{rec}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1612,41 +2170,55 @@ export default function ContentReview() {
                         </div>
                       )}
 
-                      {/* 3 Review Decision Action Buttons */}
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-2">
-                        {/* 1. Reject */}
-                        <button
-                          type="button"
-                          onClick={handleReject}
-                          className="neu-btn px-4 py-2 text-xs font-bold text-[#EF4444] hover:bg-red-50 flex items-center justify-center gap-1.5 transition-colors"
-                          title="Reject submission (requires comments)"
-                        >
-                          <XCircle className="w-4 h-4 text-[#EF4444]" />
-                          Reject Submission
-                        </button>
+                      {/* 3 Review Decision Action Buttons or Creator Mode Notice */}
+                      {currentUserRole === 'Creator' ? (
+                        <div className="p-3.5 rounded-2xl bg-[#F59E0B]/10 border border-[#F59E0B]/25 text-xs text-[#B45309] flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5">
+                            <Users className="w-4 h-4 flex-shrink-0 text-[#F59E0B]" />
+                            <span>
+                              Active in <strong>Creator</strong> role. Use the interactive working copy editor to correct findings. Review decisions and production clearance require <strong>Reviewer</strong> or <strong>Manager</strong> credentials.
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/80 text-[#B45309] whitespace-nowrap">
+                            Read-Only Sign-off
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2.5 pt-2">
+                          {/* 1. Reject */}
+                          <button
+                            type="button"
+                            onClick={handleReject}
+                            className="neu-btn px-4 py-2 text-xs font-bold text-[#EF4444] hover:bg-red-50 flex items-center justify-center gap-1.5 transition-colors"
+                            title="Reject submission (requires comments)"
+                          >
+                            <XCircle className="w-4 h-4 text-[#EF4444]" />
+                            Reject Submission
+                          </button>
 
-                        {/* 2. Request Revisions */}
-                        <button
-                          type="button"
-                          onClick={handleRequestRevisions}
-                          className="neu-btn px-4 py-2 text-xs font-bold text-[#D97706] hover:bg-amber-50 flex items-center justify-center gap-1.5 transition-colors"
-                          title="Return for changes and correction (requires comments)"
-                        >
-                          <RotateCcw className="w-4 h-4 text-[#D97706]" />
-                          Request Revisions
-                        </button>
+                          {/* 2. Request Revisions */}
+                          <button
+                            type="button"
+                            onClick={handleRequestRevisions}
+                            className="neu-btn px-4 py-2 text-xs font-bold text-[#D97706] hover:bg-amber-50 flex items-center justify-center gap-1.5 transition-colors"
+                            title="Return for changes and correction (requires comments)"
+                          >
+                            <RotateCcw className="w-4 h-4 text-[#D97706]" />
+                            Request Revisions
+                          </button>
 
-                        {/* 3. Approve Asset */}
-                        <button
-                          type="button"
-                          onClick={handleInitiateApprove}
-                          className="neu-btn-primary px-5 py-2 text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm"
-                          title="Approve content after human verification (requires confirmation)"
-                        >
-                          <Check className="w-4 h-4" />
-                          Approve Asset
-                        </button>
-                      </div>
+                          {/* 3. Approve Asset */}
+                          <button
+                            type="button"
+                            onClick={handleInitiateApprove}
+                            className="neu-btn-primary px-5 py-2 text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm"
+                            title="Approve content after human verification (requires confirmation)"
+                          >
+                            <Check className="w-4 h-4" />
+                            Approve Asset
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Governance Audit Trail & Timeline History */}
@@ -1705,6 +2277,17 @@ export default function ContentReview() {
 
                                 <div className="flex items-center gap-2 text-[11px] text-[#5E6E82] flex-wrap">
                                   <span>Actor: <strong className="text-[#202B45]">{event.actor || 'Workspace Administrator'}</strong></span>
+                                  {event.role && (
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                                      event.role === 'Manager'
+                                        ? 'bg-[#536DFE]/15 text-[#536DFE]'
+                                        : event.role === 'Reviewer'
+                                        ? 'bg-[#10B981]/15 text-[#047857]'
+                                        : 'bg-[#F59E0B]/15 text-[#B45309]'
+                                    }`}>
+                                      {event.role}
+                                    </span>
+                                  )}
                                   <span>•</span>
                                   <span>Score: <strong className="text-[#202B45]">{event.score}%</strong></span>
                                   <span>•</span>
@@ -2093,6 +2676,461 @@ export default function ContentReview() {
               >
                 <Check className="w-4 h-4" />
                 Confirm & Sign Off Approval
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Visual Creative Zoom Modal */}
+      {zoomModalImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative max-w-4xl max-h-[90vh] bg-white rounded-3xl p-4 shadow-2xl neu-card border border-white flex flex-col items-center">
+            <button
+              type="button"
+              onClick={() => setZoomModalImage(null)}
+              className="absolute top-4 right-4 p-2 rounded-2xl bg-black/60 hover:bg-black/80 text-white z-10 transition-all"
+              title="Close image zoom"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div className="overflow-auto max-h-[80vh] w-full flex items-center justify-center p-2">
+              <img
+                src={zoomModalImage}
+                alt="Enlarged creative preview"
+                className="max-h-[75vh] max-w-full object-contain rounded-2xl shadow-md"
+              />
+            </div>
+            <div className="w-full flex items-center justify-between text-xs text-[#5E6E82] pt-3 px-2 border-t border-[#D5DDE7]">
+              <span className="font-semibold">Full Resolution Visual Creative</span>
+              <button
+                type="button"
+                onClick={() => setZoomModalImage(null)}
+                className="neu-btn px-3 py-1 text-xs font-bold text-[#202B45]"
+              >
+                Close View
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* COMBINED MULTIMODAL COMPLIANCE CERTIFICATE & AUDIT PDF MODAL */}
+      {showCertificateModal && activeReview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative max-w-4xl max-h-[90vh] bg-white rounded-3xl p-6 md:p-8 shadow-2xl neu-card border border-white flex flex-col overflow-y-auto">
+            {/* Certificate Header Controls */}
+            <div className="flex items-center justify-between pb-4 border-b border-[#D5DDE7]">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#536DFE]">
+                  Multimodal Governance Certification
+                </span>
+                <h3 className="text-xl font-extrabold text-[#202B45]">
+                  BrandGuard AI Compliance Certificate & Audit Record
+                </h3>
+                <p className="text-xs text-[#5E6E82]">
+                  Asset: <strong>{activeReview.title}</strong> • {activeReview.organisationId || selectedOrganisation}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="neu-btn-primary px-4 py-2 text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                >
+                  <Printer className="w-4 h-4" />
+                  Print / Save PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowCertificateModal(false)}
+                  className="neu-btn p-2 text-[#8A99AD] hover:text-[#202B45] rounded-xl"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Certificate Body */}
+            <div className="space-y-6 pt-5 print:p-0">
+              {/* Asset Status & Score Banner */}
+              <div className="p-4 rounded-2xl bg-[#E8ECF3] border border-white flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div>
+                  <span className="text-[10px] font-bold text-[#8A99AD] uppercase block">Compliance Verdict</span>
+                  <div className="text-2xl font-black text-[#202B45] flex items-center gap-2">
+                    <span>{activeReview.status}</span>
+                    <span className={`text-sm font-bold px-2.5 py-0.5 rounded-full ${
+                      activeReview.score >= 85 ? 'bg-[#10B981]/15 text-[#047857]' : activeReview.score >= 70 ? 'bg-[#F59E0B]/15 text-[#B45309]' : 'bg-[#EF4444]/15 text-[#B91C1C]'
+                    }`}>
+                      {activeReview.score}% Score
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#5E6E82] mt-0.5">
+                    Evaluated via {activeReview.modelUsed || 'Gemini 3.5 Flash'} Multimodal Engine
+                  </p>
+                </div>
+
+                {activeReview.decisionDetails && (
+                  <div className="text-right text-xs">
+                    <span className="text-[10px] text-[#8A99AD] block">Certified Sign-off</span>
+                    <strong className="text-[#202B45]">{activeReview.decisionDetails.reviewer}</strong>
+                    <span className="text-[#8A99AD] block text-[10px]">{activeReview.decisionDetails.formattedDate} at {activeReview.decisionDetails.formattedTime}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Multimodal Creative Asset & Detected Swatches (If Image Submission) */}
+              {(activeReview.originalFile?.previewUrl || activeReview.visualAnalysis) && (
+                <div className="p-4 rounded-2xl bg-gray-50 border border-gray-200 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#202B45] flex items-center gap-1.5">
+                      <Palette className="w-4 h-4 text-[#536DFE]" />
+                      Visual Creative Multimodal Inspection
+                    </h4>
+                    {activeReview.visualAnalysis?.visualScore !== undefined && activeReview.visualAnalysis?.visualScore !== null && (
+                      <span className="text-xs font-bold text-[#536DFE]">
+                        Visual Score: {activeReview.visualAnalysis.visualScore}%
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
+                    {activeReview.originalFile?.previewUrl && (
+                      <div className="p-2 rounded-xl bg-white border border-gray-200 flex items-center justify-center">
+                        <img
+                          src={activeReview.originalFile.previewUrl}
+                          alt="Creative Inspection"
+                          className="max-h-48 object-contain rounded-lg"
+                        />
+                      </div>
+                    )}
+
+                    {/* Detected Colors */}
+                    <div className="space-y-2">
+                      <span className="text-[11px] font-bold text-gray-700 block">
+                        Detected Palette & HEX Codes
+                      </span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(activeReview.visualAnalysis?.detectedColors || []).map((c, i) => (
+                          <div key={i} className="p-1.5 rounded-lg bg-white border border-gray-200 flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-md border flex-shrink-0" style={{ backgroundColor: c.hex }} />
+                            <div className="min-w-0">
+                              <span className="text-[10px] font-mono font-bold block">{c.hex}</span>
+                              <span className="text-[9px] text-gray-500">{c.isBrandApproved ? 'Approved' : 'Unapproved'}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Logo, Typography & Layout Summaries */}
+                  {activeReview.visualAnalysis && (
+                    <div className="grid grid-cols-3 gap-2 text-[11px] pt-2 border-t border-gray-200">
+                      <div>
+                        <strong className="block text-gray-900">Logo Master Verification:</strong>
+                        <span className="text-gray-600 block truncate">
+                          {activeReview.visualAnalysis.logoAssessment?.referenceStatus || (activeReview.visualAnalysis.logoAssessment?.isCompliant ? 'Verified Match' : 'Discrepancy')}
+                        </span>
+                        {activeReview.approvedLogoUsed && (
+                          <span className="text-[10px] text-gray-500 block truncate">
+                            Ref: {activeReview.approvedLogoUsed.name}
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <strong className="block text-gray-900">Typography:</strong>
+                        <span className="text-gray-600">{activeReview.visualAnalysis.typographyAssessment?.hierarchyRating || 'Standard'}</span>
+                      </div>
+                      <div>
+                        <strong className="block text-gray-900">Layout:</strong>
+                        <span className="text-gray-600">{activeReview.visualAnalysis.layoutAssessment?.spacingBalance || 'Balanced'}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Text Violations & Guidelines Evaluated */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-[#202B45] mb-2">
+                  Guideline Violations & Findings ({activeReview.violations?.length || 0})
+                </h4>
+                {activeReview.violations && activeReview.violations.length > 0 ? (
+                  <div className="space-y-2">
+                    {activeReview.violations.map((v, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-gray-50 border border-gray-200 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-900">{v.relevantGuideline || v.category || 'Standard'}</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-200">{v.severity || 'High'}</span>
+                        </div>
+                        <p className="text-gray-600">{v.explanation || v.detail}</p>
+                        {v.suggestedCorrection && (
+                          <div className="p-1.5 rounded bg-white text-[11px] text-emerald-700 font-mono">
+                            Correction: {v.suggestedCorrection}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold">
+                    ✓ Zero guideline violations detected. Asset is fully certified.
+                  </div>
+                )}
+              </div>
+
+              {/* Reviewer Comments & Audit Seal */}
+              {activeReview.decisionDetails?.comments && (
+                <div className="p-3 rounded-xl bg-gray-50 border border-gray-200 text-xs">
+                  <strong className="block text-gray-900 mb-0.5">Attached Reviewer Comments:</strong>
+                  <p className="italic text-gray-700">"{activeReview.decisionDetails.comments}"</p>
+                </div>
+              )}
+
+              <div className="p-4 rounded-2xl bg-[#E8ECF3] border border-white flex items-center justify-between text-xs text-[#5E6E82]">
+                <div>
+                  <span className="font-bold text-[#202B45] block">BrandGuard AI Governance Verification Stamp</span>
+                  Recorded in immutable audit history for {activeReview.organisationId || selectedOrganisation}.
+                </div>
+                <span className="font-mono text-[10px] text-[#8A99AD] font-bold">
+                  AUTH-{activeReview.id}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PUBLISH TO CMS / SOCIAL MODAL */}
+      {showPublishModal && activeReview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="relative max-w-lg w-full bg-white rounded-3xl p-6 shadow-2xl neu-card border border-white space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-[#D5DDE7]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#10B981]/15 text-[#047857] flex items-center justify-center">
+                  <Share2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-[#202B45]">Publish Production Asset</h4>
+                  <p className="text-xs text-[#5E6E82]">Automated CMS, Social & Webhook Dispatch</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPublishModal(false)}
+                className="neu-btn p-1.5 text-[#8A99AD] hover:text-[#202B45] rounded-xl"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#E8ECF3] text-xs space-y-1.5 border border-white">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-[#8A99AD]">Collateral:</span>
+                <strong className="text-sm font-bold text-[#202B45] truncate max-w-[260px]">{activeReview.title}</strong>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-[#8A99AD]">Compliance Score:</span>
+                <span className="text-[11px] text-[#10B981] font-extrabold">{activeReview.score}%</span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                <span className="font-semibold text-[#8A99AD]">Production Clearance:</span>
+                {activeReview.productionClearance ? (
+                  <span className="text-[10px] font-extrabold text-[#047857] bg-[#10B981]/15 px-2 py-0.5 rounded-full flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-[#10B981]" />
+                    Verified Cleared
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-extrabold text-[#B91C1C] bg-[#EF4444]/15 px-2 py-0.5 rounded-full">
+                    Awaiting Clearance
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {publishFeedback && (
+              <div className={`p-3 rounded-xl border text-xs font-bold flex items-center gap-2 animate-in fade-in ${
+                publishFeedback.error ? 'bg-[#EF4444]/15 border-[#EF4444]/30 text-[#B91C1C]' : 'bg-[#10B981]/15 border-[#10B981]/30 text-[#065F46]'
+              }`}>
+                {publishFeedback.error ? <AlertTriangle className="w-4 h-4 flex-shrink-0" /> : <CheckCircle2 className="w-4 h-4 flex-shrink-0" />}
+                <span>{publishFeedback.message}</span>
+              </div>
+            )}
+
+            <div>
+              <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block mb-1">
+                Distribution Destination:
+              </label>
+              <select
+                value={publishPlatform}
+                onChange={(e) => setPublishPlatform(e.target.value)}
+                className="neu-input w-full px-3 py-2 text-xs font-bold text-[#202B45]"
+              >
+                <option value="Custom Webhooks">Custom Webhooks (content.published Event)</option>
+                <option value="WordPress CMS">WordPress CMS (Production Posts API)</option>
+                <option value="LinkedIn">LinkedIn (Corporate Page Feed)</option>
+                <option value="Slack">Slack (#brand-releases Notification)</option>
+              </select>
+            </div>
+
+            {/* Publishing Mode: Simulation vs Live */}
+            <div className="p-3 rounded-xl bg-white/70 border border-white space-y-2">
+              <label className="text-[11px] font-bold text-[#202B45] uppercase tracking-wider block">
+                Publishing Mode:
+              </label>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <label className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-start gap-2 ${
+                  publishIsSimulation ? 'bg-[#536DFE]/10 border-[#536DFE] text-[#536DFE]' : 'bg-white/60 border-slate-200 text-[#5E6E82]'
+                }`}>
+                  <input
+                    type="radio"
+                    name="pubModeCr"
+                    checked={publishIsSimulation}
+                    onChange={() => setPublishIsSimulation(true)}
+                    className="mt-0.5 accent-[#536DFE]"
+                  />
+                  <div>
+                    <div className="font-bold text-[11px]">Simulation Mode</div>
+                    <div className="text-[10px] opacity-80 leading-tight">Dispatches to test sandbox. Never claims actual publication.</div>
+                  </div>
+                </label>
+
+                <label className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-start gap-2 ${
+                  !publishIsSimulation ? 'bg-[#10B981]/10 border-[#10B981] text-[#047857]' : 'bg-white/60 border-slate-200 text-[#5E6E82]'
+                }`}>
+                  <input
+                    type="radio"
+                    name="pubModeCr"
+                    checked={!publishIsSimulation}
+                    onChange={() => setPublishIsSimulation(false)}
+                    className="mt-0.5 accent-[#10B981]"
+                  />
+                  <div>
+                    <div className="font-bold text-[11px]">Live Integration</div>
+                    <div className="text-[10px] opacity-80 leading-tight">Requires verified API credentials in Settings.</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* WordPress Post Status (Draft vs Publish) */}
+            {publishPlatform === 'WordPress CMS' && !publishIsSimulation && (
+              <div className="p-3 rounded-xl bg-[#21759B]/10 border border-[#21759B]/20 space-y-2">
+                <label className="text-[11px] font-bold text-[#21759B] uppercase tracking-wider block">
+                  WordPress Target Post Status:
+                </label>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <label className={`p-2 rounded-xl border cursor-pointer transition-all flex items-start gap-2 ${
+                    wpPostStatus === 'draft' ? 'bg-white border-[#21759B] text-[#21759B] font-bold shadow-sm' : 'bg-white/60 border-slate-200 text-[#5E6E82]'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="wpStatusCr"
+                      value="draft"
+                      checked={wpPostStatus === 'draft'}
+                      onChange={() => setWpPostStatus('draft')}
+                      className="mt-0.5 accent-[#21759B]"
+                    />
+                    <div>
+                      <div className="text-[11px]">Draft (Recommended)</div>
+                      <div className="text-[9px] opacity-75 leading-tight">Saved to WP editorial queue for review before public release.</div>
+                    </div>
+                  </label>
+
+                  <label className={`p-2 rounded-xl border cursor-pointer transition-all flex items-start gap-2 ${
+                    wpPostStatus === 'publish' ? 'bg-white border-[#10B981] text-[#047857] font-bold shadow-sm' : 'bg-white/60 border-slate-200 text-[#5E6E82]'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="wpStatusCr"
+                      value="publish"
+                      checked={wpPostStatus === 'publish'}
+                      onChange={() => setWpPostStatus('publish')}
+                      className="mt-0.5 accent-[#10B981]"
+                    />
+                    <div>
+                      <div className="text-[11px]">Publish Live</div>
+                      <div className="text-[9px] opacity-75 leading-tight">Published immediately visible to the public.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {/* Dispatch Notes */}
+            <div>
+              <label className="text-[11px] font-bold text-[#5E6E82] block mb-1">
+                Distribution / Campaign Notes:
+              </label>
+              <input
+                type="text"
+                value={publishNotes}
+                onChange={(e) => setPublishNotes(e.target.value)}
+                placeholder="Release notes or campaign identifier (e.g. Q4 Global Campaign Release)..."
+                className="neu-input w-full px-3 py-1.5 text-xs text-[#202B45]"
+              />
+            </div>
+
+            {/* Publishing History */}
+            {activeReview.publishingHistory && activeReview.publishingHistory.length > 0 && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-200">
+                <div className="flex items-center justify-between text-xs font-bold text-[#202B45]">
+                  <span>Publishing History:</span>
+                  <span className="text-[10px] text-[#8A99AD] font-medium">{activeReview.publishingHistory.length} record(s)</span>
+                </div>
+                <div className="max-h-28 overflow-y-auto space-y-1 text-[10px]">
+                  {activeReview.publishingHistory.map((hist) => (
+                    <div key={hist.id} className="p-2 rounded-lg bg-[#E8ECF3] border border-white flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className={`w-1.5 h-1.5 rounded-full ${hist.status.includes('Published') ? 'bg-[#10B981]' : 'bg-[#EF4444]'}`} />
+                        <span className="font-bold text-[#202B45]">{hist.channel}</span>
+                        {hist.publishedUrl ? (
+                          <a
+                            href={hist.publishedUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[#536DFE] hover:underline font-semibold"
+                          >
+                            Post #{hist.wordpressPostId || 'Link'}
+                          </a>
+                        ) : null}
+                        <span className="text-[#8A99AD] truncate max-w-[140px]">{hist.notes}</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className={`px-1.5 py-0.2 rounded font-bold ${
+                          hist.status.includes('Published') ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {hist.status}
+                        </span>
+                        <span className="text-[#8A99AD]">{hist.formattedTime}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPublishModal(false)}
+                className="neu-btn px-4 py-2 text-xs font-bold text-[#5E6E82]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePublishAsset}
+                disabled={!activeReview.productionClearance || isPublishing}
+                className="neu-btn-primary px-5 py-2 text-xs font-bold flex items-center gap-1.5 shadow-sm bg-[#10B981] hover:bg-[#059669] text-white disabled:opacity-50"
+              >
+                <Send className="w-4 h-4" />
+                {isPublishing
+                  ? 'Publishing to WordPress...'
+                  : publishIsSimulation
+                  ? 'Dispatch Simulation'
+                  : 'Live Dispatch'}
               </button>
             </div>
           </div>

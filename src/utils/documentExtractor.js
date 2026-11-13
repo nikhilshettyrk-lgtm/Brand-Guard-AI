@@ -188,11 +188,11 @@ export async function extractTextFromFile(file, onProgress) {
     return { text, method: 'PDF Parser', fileType: 'PDF' };
   }
 
-  if (['.png', '.jpg', '.jpeg'].includes(extension)) {
+  if (['.png', '.jpg', '.jpeg', '.webp'].includes(extension)) {
     if (onProgress) onProgress(20, 'Starting optical character recognition (OCR)...');
     const text = await extractTextFromImage(file, onProgress);
     return { text, method: 'Tesseract OCR', fileType: extension.replace('.', '').toUpperCase() };
   }
 
-  throw new Error(`Unsupported file type: "${extension}". Allowed formats: PDF, DOCX, TXT, PNG, JPG/JPEG.`);
+  throw new Error(`Unsupported file type: "${extension}". Allowed formats: PDF, DOCX, TXT, PNG, JPG, JPEG, WEBP.`);
 }
